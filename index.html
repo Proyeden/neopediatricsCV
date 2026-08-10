@@ -3789,7 +3789,10 @@ function buildDoc(){
   const items = esquema().map(e=>({e, d:state.dosis[e.id],
                                    st:estadoDosis(e,state.dosis[e.id],hoy)}));
   const aplicadas = items.filter(i=>i.st.k==="ok");
-  const pendientes = items.filter(i=>i.st.k!=="ok").slice(0,6);
+  /* Las que el médico marcó «No aplica» no son pendientes: mostrarlas en
+     el carné del encargado lo mandaría a pedir una dosis que se decidió
+     no poner. */
+  const pendientes = items.filter(i=>i.st.k!=="ok" && i.st.k!=="na").slice(0,6);
 
   const listaAplicadas = aplicadas.length
     ? `<div class="doc-vac">${aplicadas.map(i=>
@@ -4184,6 +4187,17 @@ function escucharExpediente(id){
   });
 }
 
+/* Estado de carga: sin esto la mamá ve el mensaje de «no hay expediente»
+   durante los segundos que dura el reintento, que es justo el mensaje que
+   no debe leer si al final sí lo hay. */
+function mostrarBuscandoExpediente(){
+  const host=document.getElementById("vista-padres");
+  if(!host || puedeEditar()) return;
+  host.innerHTML=`<div class="pw"><div class="pw-card"><div class="empty">
+    <b>Buscando el expediente de su hijo…</b>
+    Un momento.</div></div></div>`;
+}
+
 async function refrescarPadres(){
   if(!Nube.activa()){
     aviso("d-alerts","warn","Sin conexión. Intente cuando tenga internet.");
@@ -4192,8 +4206,13 @@ async function refrescarPadres(){
   const btn=document.querySelector('[data-action="refrescar-padres"]');
   if(btn){ btn.disabled=true; btn.textContent="Buscando…"; }
   try{
-    const mios = await Nube.misPacientes();
-    if(mios.length) await abrirExpediente(mios[0].id);
+    let mios=[];
+    for(const ms of [0,700,1500]){
+      if(ms) await new Promise(r=>setTimeout(r, ms));
+      mios = await Nube.misPacientes();
+      if(mios.length) break;
+    }
+    if(mios.length){ state.sinVinculo=null; await abrirExpediente(mios[0].id); }
   }catch(err){ console.error("refrescarPadres", err); }
   if(btn){ btn.disabled=false; btn.textContent="Buscar información nueva"; }
   renderPadres();
@@ -4801,7 +4820,21 @@ async function arrancarDatos(){
   }
 
   try{
-    const mios = await Nube.misPacientes();
+    /* Firestore recibe la sesión por su cuenta, y en el primer arranque
+       tras iniciar sesión puede consultar antes de tenerla lista: la
+       consulta vuelve vacía y parece que no hay expediente. Por eso se
+       reintenta unas veces antes de dar por buena la respuesta. Era el
+       motivo de que funcionara solo después de entrar como clínico:
+       esa segunda sesión ya encontraba todo asentado. */
+    mostrarBuscandoExpediente();
+    let mios = [];
+    const esperas = [0, 700, 1500, 3000];
+    for(const ms of esperas){
+      if(ms) await new Promise(r=>setTimeout(r, ms));
+      mios = await Nube.misPacientes();
+      if(mios.length) break;
+    }
+
     if(!mios.length){
       /* «No vinculado» tiene dos causas que se ven igual: que la clínica
          no haya asociado la cuenta, o que este aparato haya quedado con
