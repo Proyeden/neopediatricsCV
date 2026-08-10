@@ -1313,7 +1313,7 @@ body.lectura .solo-clinico{display:none !important}
         <div class="field">
           <div class="lbl-row">
             <label for="dm-resp">Responsable de la administración</label>
-            <button type="button" class="link" data-action="dm-yo">Fui yo</button>
+            <button type="button" class="link" data-action="dm-yo" id="dm-yo-btn">Usar el predeterminado</button>
           </div>
           <input type="text" id="dm-resp" autocomplete="off" placeholder="Quién aplicó la dosis">
         </div>
@@ -1510,8 +1510,11 @@ const aIdentificador = correo => esUsuarioInterno(correo)
   ? String(correo).split("@")[0] : String(correo||"");
 
 const CLINICOS = [
-  {mail:"empinares@gmail.com", nombre:"Dr. Denis Cotzojay", colegiado:"14,986"}
-  // , {mail:"…", nombre:"Dra. María José Nóchez", colegiado:"…"}
+  {mail:"empinares@gmail.com", nombre:"Dra. María José Nóchez", colegiado:"16192"}
+  // Al abrir una cuenta propia para otro clínico, se agrega aquí y en la
+  // lista clinicos() de las reglas de Firestore. Desde ese momento cada
+  // dosis queda firmada con quien realmente la registró.
+  // , {mail:"…", nombre:"Dr. Denis Cotzojay", colegiado:"14986"}
 ];
 const esClinico = mail => CLINICOS.some(c=>c.mail===String(mail||"").trim().toLowerCase());
 const datosClinico = mail => CLINICOS.find(c=>c.mail===String(mail||"").trim().toLowerCase()) || null;
@@ -4014,6 +4017,14 @@ function abrirDosis(id){
   document.getElementById("dm-resp").value  = d.responsable || "";
   document.getElementById("dm-col").value   = d.colegiado || "";
   document.getElementById("dm-obs").value   = d.observaciones || "";
+  /* La cuenta es compartida, así que «fui yo» sería ambiguo: el botón
+     nombra a quién va a poner y el campo nace vacío a propósito. */
+  const pred = datosClinico(state.sesion?.email);
+  const btnYo = document.getElementById("dm-yo-btn");
+  if(btnYo){
+    btnYo.hidden = !pred;
+    if(pred) btnYo.textContent = "Usar " + pred.nombre;
+  }
   document.getElementById("dm-borrar").hidden = !d.fecha;
   document.getElementById("dm-alerts").innerHTML = "";
 
