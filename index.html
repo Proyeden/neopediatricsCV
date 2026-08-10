@@ -4210,13 +4210,22 @@ async function probarEscritura(){
     }catch(e){ lineas.push(["Registrar dosis", e.code||e.message, false]); }
   }
 
+  /* La colección accesos es nueva: si las reglas no se han vuelto a
+     publicar, esta es la única línea que falla, y eso lo dice todo. */
+  try{
+    await Nube.guardarIndiceAcceso(Nube.auth.currentUser.uid, idPrueba||"prueba", "Prueba técnica");
+    lineas.push(["Escribir atajo de acceso","OK",true]);
+  }catch(e){ lineas.push(["Escribir atajo de acceso", e.code||e.message, false]); }
+
   const todo = lineas.every(l=>l[2]);
   aviso("d-alerts", todo?"ok":"block",
     `<b>Prueba de escritura</b><br>` +
     lineas.map(l=>`${l[2]?"✓":"✕"} ${l[0]}: <code>${esc(l[1])}</code>`).join("<br>") +
     (todo
       ? `<br>Todo funciona. ${idPrueba?`Borre el expediente <b>ZZ Prueba técnica</b> desde la consola de Firebase.`:""}`
-      : `<br>El bloque que falla es el de la primera línea con ✕. Esa es la parte de las reglas que hay que revisar.`));
+      : `<br>El bloque que falla es el de la primera línea con ✕: cada línea corresponde a una
+           colección distinta de las reglas. Si la única que falla es <b>el atajo de acceso</b>,
+           es que falta volver a publicar las reglas con la colección <code>accesos</code>.`));
 }
 
 /* El encargado no tiene por qué entender de sincronización: un botón que
@@ -4797,23 +4806,33 @@ async function subirPendientes(silencioso){
   if(!Nube.activa()||!puedeEditar()) return;
   if(!state.paciente.nombre||!state.paciente.fn) return;
 
+  /* Cada escritura se etiqueta antes de intentarla. Sin esto, «permiso
+     denegado» no dice nada: cada colección tiene su propio bloque de
+     reglas y hay que saber cuál rechazó. */
+  let paso = "";
   try{
     if(!state.pacienteId || state.pendPaciente){
       const doc = pacienteADocumento(state.paciente, state.sesion.email);
       if(!state.pacienteId){
+        paso = "crear el expediente (colección <code>pacientes</code>)";
         doc.creadoPor = state.sesion.email;
         doc.creadoEn  = new Date().toISOString();
         state.pacienteId = await Nube.crearPaciente(doc);
         Store.saveMeta({pacienteId:state.pacienteId});
       }else{
+        paso = "actualizar el expediente (colección <code>pacientes</code>)";
         await Nube.guardarPaciente(state.pacienteId, doc);
       }
       /* Cada acceso recibe su índice. Sin esto el responsable entra y no
          encuentra nada, que es el fallo más silencioso del sistema. */
       for(const ac of state.accesos){
         if(!ac.uid) continue;
+        paso = `escribir el atajo de acceso de <b>${esc(ac.ident)}</b> (colección <code>accesos</code>)`;
         try{ await Nube.guardarIndiceAcceso(ac.uid, state.pacienteId, state.paciente.nombre); }
-        catch(e){ console.warn("índice de acceso", ac.ident, e.code||e.message); }
+        catch(e){
+          console.warn("índice de acceso", ac.ident, e.code||e.message);
+          if(e.code==="permission-denied") throw e;   // esto sí hay que contarlo
+        }
       }
       state.pendPaciente=false;
     }
@@ -4821,12 +4840,14 @@ async function subirPendientes(silencioso){
     for(const id of [...state.pendMediciones]){
       const m=state.mediciones.find(x=>x.id===id);
       if(!m){ state.pendMediciones.delete(id); continue; }
+      paso = `guardar la medición del ${fmtFecha(m.fecha)} (subcolección <code>mediciones</code>)`;
       await Nube.guardarMedicion(state.pacienteId, medicionADocumento(m));
       state.pendMediciones.delete(id);
     }
     for(const k of [...state.pendDosis]){
       const dd=state.dosis[k];
       if(!dd){ state.pendDosis.delete(k); continue; }
+      paso = `registrar la dosis de <b>${esc(dd.biologico||k)}</b> (subcolección <code>dosis</code>)`;
       await Nube.guardarDosis(state.pacienteId, k, dd);
       state.pendDosis.delete(k);
     }
@@ -4847,7 +4868,9 @@ async function subirPendientes(silencioso){
        fallo provocado por una acción del usuario sí se explica. */
     if(silencioso!=="auto"){
       if(!silencioso) marcarSync("Sigue sin subir","err");
-      mostrarProblema(explicarError(err));
+      const e = explicarError(err);
+      if(paso) e.txt = `<b>Falló al ${paso}.</b><br>` + e.txt;
+      mostrarProblema(e);
     }
   }
 }
