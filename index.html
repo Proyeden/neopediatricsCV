@@ -1822,6 +1822,7 @@ const state = {
   pendPaciente:false,
   pendMediciones:new Set(),
   pendDosis:new Set(),
+  pendIndices:new Set(),   // uid de accesos cuyo atajo de entrada aún no está confirmado
   sede:"pinares",
   unidadPeso:"kg",   // solo afecta lo que se escribe y se ve; se guarda siempre en kg
   tab:"captura",
@@ -4363,6 +4364,7 @@ async function reintentarNube(){
   state.pendPaciente = true;
   state.mediciones.forEach(m=>state.pendMediciones.add(m.id));
   Object.keys(state.dosis).forEach(k=>state.pendDosis.add(k));
+  state.accesos.forEach(a=>{ if(a.uid) state.pendIndices.add(a.uid); });
   guardarPendientes();
   marcarSync("Subiendo todo…","pend");
   await subirPendientes(false);
@@ -4447,12 +4449,45 @@ function renderAccesos(){
         data-action="acceso-quitar" data-i="${i}">Quitar</button>`:""}
     </div>`;
   }).join("") +
+  /* «Vincular ahora» estaba condicionado a que la revisión detectara un
+     problema, y solo miraba una de las dos piezas del vínculo. Cuando lo
+     que faltaba era el atajo de entrada, el botón no aparecía nunca y el
+     usuario se quedaba sin salida. Volver a vincular no rompe nada: se
+     reescribe lo mismo. Así que está siempre. */
   (puedeEditar()?`<div class="btn-row" style="margin-bottom:var(--s3)">
+      <button type="button" class="btn btn-primary btn-sm" data-action="vincular-accesos">Vincular ahora</button>
       <button type="button" class="btn btn-ghost btn-sm" data-action="revisar-accesos">Revisar vínculo</button>
-      ${nube && state.accesos.some(a=>!nube.includes(a.uid))
-        ? `<button type="button" class="btn btn-primary btn-sm" data-action="vincular-accesos">Vincular ahora</button>`
-        : ""}
-    </div>`:"");
+    </div>
+    <p class="hint" style="margin:0 0 var(--s3)">
+      «Vincular ahora» reescribe el permiso y el atajo de entrada de cada acceso. Úselo si el
+      responsable entra y no ve el expediente.</p>`:"");
+}
+
+/* Al abrir un expediente se comprueba en silencio que cada acceso tenga
+   su atajo, y si falta se escribe. Nadie tiene que acordarse de pulsar
+   nada: el sistema se repara solo la próxima vez que ese niño pase por
+   consulta, que es exactamente cuando importa.
+
+   Se hace al abrir y no al guardar porque un atajo puede romperse por
+   fuera —alguien borra el documento en la consola, se restaura una copia
+   vieja— y en ese caso ninguna escritura nuestra lo detectaría. */
+async function repararAtajos(){
+  if(!Nube.activa() || !puedeEditar() || !state.pacienteId) return;
+  if(!state.accesos.length) return;
+  let faltan = 0;
+  for(const ac of state.accesos){
+    if(!ac.uid) continue;
+    try{
+      const idx = await Nube.leerIndice(ac.uid);
+      if(idx?.pacienteId !== state.pacienteId){ state.pendIndices.add(ac.uid); faltan++; }
+    }catch(e){ state.pendIndices.add(ac.uid); faltan++; }
+  }
+  if(!faltan) return;
+  console.info("Atajos de acceso por reparar:", faltan);
+  guardarPendientes();
+  renderPendientes();
+  await subirPendientes("auto");
+  renderPendientes();
 }
 
 async function revisarAccesos(){
@@ -4496,6 +4531,7 @@ async function revisarAccesos(){
 async function vincularAccesos(){
   if(!puedeEditar()||!state.pacienteId) return;
   state.pendPaciente = true;
+  state.accesos.forEach(a=>{ if(a.uid) state.pendIndices.add(a.uid); });
   guardarPendientes();
   marcarSync("Vinculando…","pend");
   await subirPendientes(false);
@@ -4557,6 +4593,9 @@ async function guardarAcceso(){
 
   state.accesos.push({uid:r.uid, ident, tipo:tipoAcceso, creadoEn:new Date().toISOString()});
   Store.saveMeta({accesos:state.accesos});
+  state.pendIndices.add(r.uid);
+  state.pendPaciente = true;
+  guardarPendientes();
   sincronizarPaciente();
   document.getElementById("acceso-modal").hidden=true;
   renderAccesos();
@@ -4787,8 +4826,10 @@ function pendientes(){
   return {
     mediciones: state.pendMediciones.size,
     dosis: state.pendDosis.size,
+    indices: state.pendIndices.size,
     paciente: state.pendPaciente,
-    total: state.pendMediciones.size + state.pendDosis.size + (state.pendPaciente?1:0)
+    total: state.pendMediciones.size + state.pendDosis.size + state.pendIndices.size
+           + (state.pendPaciente?1:0)
   };
 }
 
@@ -4798,7 +4839,12 @@ function renderPendientes(){
   const p=pendientes();
   if(!p.total || !puedeEditar()){ el.hidden=true; return; }
   el.hidden=false;
-  el.innerHTML=`<b>${p.total}</b> sin subir
+  const detalle = [
+    p.mediciones ? `${p.mediciones} medici${p.mediciones===1?"ón":"ones"}` : null,
+    p.dosis ? `${p.dosis} vacuna${p.dosis===1?"":"s"}` : null,
+    p.indices ? `${p.indices} acceso${p.indices===1?"":"s"}` : null
+  ].filter(Boolean).join(" · ");
+  el.innerHTML=`<b>${p.total}</b> sin subir${detalle?` (${detalle})`:""}
     <button type="button" class="link" data-action="subir-todo">Subir ahora</button>`;
 }
 
@@ -4823,18 +4869,19 @@ async function subirPendientes(silencioso){
         paso = "actualizar el expediente (colección <code>pacientes</code>)";
         await Nube.guardarPaciente(state.pacienteId, doc);
       }
-      /* Cada acceso recibe su índice. Sin esto el responsable entra y no
-         encuentra nada, que es el fallo más silencioso del sistema. */
-      for(const ac of state.accesos){
-        if(!ac.uid) continue;
-        paso = `escribir el atajo de acceso de <b>${esc(ac.ident)}</b> (colección <code>accesos</code>)`;
-        try{ await Nube.guardarIndiceAcceso(ac.uid, state.pacienteId, state.paciente.nombre); }
-        catch(e){
-          console.warn("índice de acceso", ac.ident, e.code||e.message);
-          if(e.code==="permission-denied") throw e;   // esto sí hay que contarlo
-        }
-      }
       state.pendPaciente=false;
+    }
+
+    /* El atajo de entrada de cada responsable es parte del expediente, no
+       un extra: sin él la madre entra y no encuentra nada. Por eso viaja
+       en la misma cola que las mediciones, se reintenta igual, y si falla
+       se cuenta como pendiente en vez de perderse en la consola. */
+    for(const uid of [...state.pendIndices]){
+      const ac = state.accesos.find(a=>a.uid===uid);
+      if(!ac){ state.pendIndices.delete(uid); continue; }
+      paso = `escribir el atajo de acceso de <b>${esc(ac.ident)}</b> (colección <code>accesos</code>)`;
+      await Nube.guardarIndiceAcceso(uid, state.pacienteId, state.paciente.nombre);
+      state.pendIndices.delete(uid);
     }
 
     for(const id of [...state.pendMediciones]){
@@ -4879,7 +4926,8 @@ function guardarPendientes(){
   Store.saveMeta({pend:{
     p:state.pendPaciente,
     m:[...state.pendMediciones],
-    d:[...state.pendDosis]
+    d:[...state.pendDosis],
+    i:[...state.pendIndices]
   }});
 }
 
@@ -5036,6 +5084,7 @@ async function abrirExpediente(id){
     state.omisiones = e.paciente.omisiones || {};
     state.accesos = e.paciente.accesosDetalle || [];
     state.pendPaciente=false; state.pendMediciones.clear(); state.pendDosis.clear();
+    state.pendIndices.clear();
     state.conteoNube=null; state.autorizadosNube=null;
     guardarPendientes();
     state.mediciones = e.mediciones.map(documentoAMedicion);
@@ -5050,6 +5099,7 @@ async function abrirExpediente(id){
     Store.saveAll(state);
     render();
     marcarSync("");
+    if(puedeEditar()) repararAtajos();
   }catch(err){
     console.error("abrirExpediente", err);
     marcarSync("No se pudo abrir el expediente","err");
@@ -5137,7 +5187,7 @@ function nuevoPaciente(){
   state.omisiones={};
   state.accesos=[];
   state.pendPaciente=false; state.pendMediciones.clear(); state.pendDosis.clear();
-  state.conteoNube=null; guardarPendientes();
+  state.pendIndices.clear(); state.conteoNube=null; guardarPendientes();
   state.borrador={fecha:hoyISO(),peso:"",talla:"",pc:"",nota:""};
   state.overrides.clear();
   state.tab="paciente";
@@ -5349,6 +5399,7 @@ function mostrarActualizacion(nuevo){
       state.pendPaciente = !!saved.pend.p;
       state.pendMediciones = new Set(saved.pend.m||[]);
       state.pendDosis = new Set(saved.pend.d||[]);
+      state.pendIndices = new Set(saved.pend.i||[]);
     }
     if(saved.pacienteId) state.pacienteId=saved.pacienteId;
   }
