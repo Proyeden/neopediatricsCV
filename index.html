@@ -1474,34 +1474,66 @@ const ESQUEMA_BASE = [
    ============================================================ */
 const MES_TEMPORADA = 10;   // octubre
 
+/* La serie de dos dosis NO es «la primera temporada del niño»: es la
+   primovacunación, la primera vez que ese niño recibe influenza en su
+   vida. La distinción importa. Un niño que no se vacunó en su primera
+   temporada y llega a la clínica dos años después sigue necesitando dos
+   dosis, no una. Por eso la temporada de primovacunación se decide así:
+     - si ya hay alguna dosis de influenza registrada, es la temporada de
+       la primera que se aplicó;
+     - si no hay ninguna, es la primera temporada que todavía no terminó.
+   Las temporadas anteriores sin dosis quedan como oportunidades perdidas
+   y no se muestran, porque una campaña que ya cerró no se puede aplicar.
+
+   La segunda dosis puede no corresponder —edad, criterio, decisión de los
+   padres—; se retira con «No aplica», que deja constancia del motivo. */
 function temporadasInfluenza(fn){
   if(!fn) return [];
-  const salida=[];
-  const inicio = fn.getFullYear();
-  let primera = null;
+  const hoy = parseISO(hoyISO());
+  const elegibles = [];
 
-  for(let y=inicio; y<=inicio+6; y++){
+  for(let y=fn.getFullYear(); y<=fn.getFullYear()+6; y++){
     const arranque = new Date(y, MES_TEMPORADA-1, 1);
     const meses = edadMeses(fn, arranque);
-    if(meses < 6) continue;      // todavía no le toca ninguna
-    if(meses > 60) break;        // fuera del alcance de esta herramienta
+    if(meses < 6) continue;
+    if(meses > 60) break;
+    elegibles.push({y, arranque, cierre:new Date(y+1, 2, 31)});   // octubre a marzo
+  }
+  if(!elegibles.length) return [];
 
-    if(primera===null){
-      primera = y;
-      /* Primera temporada: dos dosis con cuatro semanas de diferencia. */
-      salida.push({id:`flu-${y}-1`, bio:"Influenza", clase:"primaria", n:1,
-        temporada:y, objetivo:toISO(arranque), grupo:`temporada:${y}`,
-        nota:"Primera temporada del niño: se aplican dos dosis separadas por cuatro semanas."});
-      const segunda = new Date(y, MES_TEMPORADA-1, 29);
-      salida.push({id:`flu-${y}-2`, bio:"Influenza", clase:"primaria", n:2,
-        temporada:y, objetivo:toISO(segunda), grupo:`temporada:${y}`,
-        nota:"Completa la primera temporada. Puede omitirse si se decide una sola dosis; use «No aplica»."});
+  /* ¿En qué temporada se primovacunó, o se primovacunará? */
+  const aplicadas = Object.entries(state.dosis)
+    .filter(([k,d])=> k.startsWith("flu-") && d && d.fecha && !d.anulada)
+    .map(([k,d])=> parseISO(d.fecha))
+    .filter(Boolean)
+    .sort((a,b)=>a-b);
+
+  let anioPrimo;
+  if(aplicadas.length){
+    const p = aplicadas[0];
+    // una dosis puesta en enero pertenece a la temporada del año anterior
+    anioPrimo = p.getMonth()+1 >= MES_TEMPORADA ? p.getFullYear() : p.getFullYear()-1;
+  }else{
+    const viva = elegibles.find(t => hoy <= t.cierre);
+    anioPrimo = (viva || elegibles[elegibles.length-1]).y;
+  }
+
+  const salida=[];
+  elegibles.forEach(t=>{
+    if(t.y < anioPrimo) return;          // campañas ya cerradas sin vacunar
+    if(t.y === anioPrimo){
+      salida.push({id:`flu-${t.y}-1`, bio:"Influenza", clase:"primo", n:1,
+        temporada:t.y, objetivo:toISO(t.arranque), grupo:`temporada:${t.y}`,
+        nota:"Primovacunación: la primera vez que este niño recibe influenza lleva dos dosis separadas por cuatro semanas, aunque llegue a los tres años."});
+      salida.push({id:`flu-${t.y}-2`, bio:"Influenza", clase:"primo", n:2,
+        temporada:t.y, objetivo:toISO(new Date(t.y, MES_TEMPORADA-1, 29)), grupo:`temporada:${t.y}`,
+        nota:"Completa la primovacunación. Si se decide una sola dosis, retírela con «No aplica» y quedará el motivo anotado."});
     }else{
-      salida.push({id:`flu-${y}`, bio:"Influenza", clase:"anual",
-        temporada:y, objetivo:toISO(arranque), grupo:`temporada:${y}`,
+      salida.push({id:`flu-${t.y}`, bio:"Influenza", clase:"anual",
+        temporada:t.y, objetivo:toISO(t.arranque), grupo:`temporada:${t.y}`,
         nota:"Una dosis por temporada, cuando llegue el biológico del año."});
     }
-  }
+  });
   return salida;
 }
 
@@ -1529,6 +1561,7 @@ function etiquetaDosis(e){
     case "unica":    return "dosis única";
     case "refuerzo": return e.n>1 ? `${ORDINAL[e.n]} dosis de refuerzo` : "dosis de refuerzo";
     case "anual":    return `dosis anual · temporada ${e.temporada}`;
+    case "primo":    return `${ORDINAL[e.n]} dosis de la primovacunación`;
     case "extra":    return e.etiquetaLibre || "fuera del esquema";
     default:         return e.temporada
       ? `${ORDINAL[e.n]} dosis de la temporada ${e.temporada}`
@@ -1775,6 +1808,7 @@ const state = {
   buscando:false,
   conteoNube:null,
   actualizadoEn:"",
+  autorizadosNube:null,   // lo que Firestore tiene realmente en autorizadosUid
   sincronizando:false,
   pendPaciente:false,
   pendMediciones:new Set(),
@@ -3035,7 +3069,10 @@ function gruposEsquema(){
 }
 
 function rotuloGrupo(b){
-  if(b.tipo==="temporada") return `Temporada ${b.temporada}`;
+  if(b.tipo==="temporada"){
+    const primo = b.items.some(i=>i.clase==="primo");
+    return `Temporada ${b.temporada}${primo?" · primovacunación":""}`;
+  }
   if(b.tipo==="extra") return "Fuera del esquema";
   return etiquetaEdad(b.m);
 }
@@ -3976,6 +4013,8 @@ document.addEventListener("click", e=>{
   else if(a==="refrescar-padres") refrescarPadres();
   else if(a==="recargar-datos"){ document.getElementById("d-alerts").innerHTML=""; arrancarDatos(); }
   else if(a==="verificar-nube") verificarNube();
+  else if(a==="revisar-accesos") revisarAccesos();
+  else if(a==="vincular-accesos") vincularAccesos();
   else if(a==="acceso-nuevo") abrirAcceso();
   else if(a==="acceso-cerrar") document.getElementById("acceso-modal").hidden=true;
   else if(a==="am-tipo"){ tipoAcceso=b.dataset.t; renderTipoAcceso(); }
@@ -4262,16 +4301,61 @@ function renderAccesos(){
       El responsable no puede ver el expediente hasta que se le cree uno.</div>`;
     return;
   }
-  host.innerHTML = state.accesos.map((a,i)=>`<div class="acceso">
+  /* Crear la cuenta y vincularla al expediente son dos cosas distintas.
+     Si lo segundo no llegó a Firestore, la mamá entra sin error y ve
+     «no está asociado a ningún niño»: el fallo más confuso de todos,
+     porque desde la clínica todo se ve bien. Aquí se muestra el estado
+     real de cada acceso, no el que uno supone. */
+  const nube = state.autorizadosNube;
+  host.innerHTML = state.accesos.map((a,i)=>{
+    const vinculado = nube ? nube.includes(a.uid) : null;
+    const etq = vinculado===null ? ""
+      : vinculado ? `<span class="pill pill-ok">Vinculado</span>`
+                  : `<span class="pill pill-late">Sin vincular</span>`;
+    return `<div class="acceso">
       <span class="ic">${esc(a.ident[0]||"?").toUpperCase()}</span>
       <span style="flex:1">
-        <span class="id">${esc(a.ident)}</span>
+        <span class="id">${esc(a.ident)} ${etq}</span>
         <span class="tp">${a.tipo==="usuario"?"Usuario sin correo":"Correo"}${
           a.creadoEn?` · creado el ${fmtFecha(a.creadoEn.slice(0,10))}`:""}</span>
       </span>
       ${puedeEditar()?`<button type="button" class="link link-danger"
         data-action="acceso-quitar" data-i="${i}">Quitar</button>`:""}
-    </div>`).join("");
+    </div>`;
+  }).join("") +
+  (puedeEditar()?`<div class="btn-row" style="margin-bottom:var(--s3)">
+      <button type="button" class="btn btn-ghost btn-sm" data-action="revisar-accesos">Revisar vínculo</button>
+      ${nube && state.accesos.some(a=>!nube.includes(a.uid))
+        ? `<button type="button" class="btn btn-primary btn-sm" data-action="vincular-accesos">Vincular ahora</button>`
+        : ""}
+    </div>`:"");
+}
+
+async function revisarAccesos(){
+  if(!Nube.activa()||!state.pacienteId){
+    aviso("d-alerts","warn","El expediente todavía no está en la nube.");
+    return;
+  }
+  try{
+    const crudo = await Nube.leerCrudo(state.pacienteId);
+    state.autorizadosNube = crudo?.autorizadosUid || [];
+    renderAccesos();
+    const faltan = state.accesos.filter(a=>!state.autorizadosNube.includes(a.uid));
+    aviso("d-alerts", faltan.length?"warn":"ok", faltan.length
+      ? `${faltan.length} acceso${faltan.length===1?"":"s"} sin vincular. Pulse <b>Vincular ahora</b>.`
+      : "Todos los accesos están vinculados. El responsable ya puede ver el expediente.");
+  }catch(err){
+    aviso("d-alerts","block",explicarError(err).txt);
+  }
+}
+
+async function vincularAccesos(){
+  if(!puedeEditar()||!state.pacienteId) return;
+  state.pendPaciente = true;
+  guardarPendientes();
+  marcarSync("Vinculando…","pend");
+  await subirPendientes(false);
+  await revisarAccesos();
 }
 
 function abrirAcceso(){
@@ -4743,7 +4827,7 @@ async function abrirExpediente(id){
     state.omisiones = e.paciente.omisiones || {};
     state.accesos = e.paciente.accesosDetalle || [];
     state.pendPaciente=false; state.pendMediciones.clear(); state.pendDosis.clear();
-    state.conteoNube=null;
+    state.conteoNube=null; state.autorizadosNube=null;
     guardarPendientes();
     state.mediciones = e.mediciones.map(documentoAMedicion);
     state.dosis = migrarDosis(e.dosis);
