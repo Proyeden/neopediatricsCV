@@ -1204,6 +1204,7 @@ body.lectura .solo-clinico{display:none !important}
             <button type="button" class="btn btn-ghost btn-sm" data-action="refrescar-token">Actualizar sesión</button>
             <button type="button" class="btn btn-ghost btn-sm" data-action="reintentar-nube">Subir todo de nuevo</button>
             <button type="button" class="btn btn-ghost btn-sm" data-action="verificar-nube">Verificar contra la nube</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-action="probar-escritura">Probar escritura</button>
           </div>
           <div id="diagnostico"></div>
         </div>
@@ -3797,6 +3798,8 @@ document.addEventListener("click", e=>{
   else if(a==="refrescar-token") refrescarSesion();
   else if(a==="reintentar-nube") reintentarNube();
   else if(a==="subir-todo") subirPendientes(false);
+  else if(a==="probar-escritura") probarEscritura();
+  else if(a==="recargar-datos"){ document.getElementById("d-alerts").innerHTML=""; arrancarDatos(); }
   else if(a==="verificar-nube") verificarNube();
   else if(a==="acceso-nuevo") abrirAcceso();
   else if(a==="acceso-cerrar") document.getElementById("acceso-modal").hidden=true;
@@ -3874,6 +3877,49 @@ document.addEventListener("keydown", e=>{
 /* Pregunta a Firestore cuántos documentos hay de verdad. Es la única
    forma honesta de decirle al usuario que su expediente está a salvo:
    comparar lo que ve en pantalla con lo que hay del otro lado. */
+/* Escribe tres documentos de prueba, uno por colección, y reporta cuál
+   falla. Es la forma más rápida de saber si el problema está en la regla
+   del paciente, en la de mediciones o en la de dosis: cada una es un
+   bloque distinto de las reglas. */
+async function probarEscritura(){
+  if(!Nube.activa()){ aviso("d-alerts","warn","Sin conexión con Firebase."); return; }
+  const correo = Nube.auth.currentUser.email.toLowerCase();
+  const lineas=[];
+  let idPrueba=null;
+
+  try{
+    idPrueba = await Nube.crearPaciente({
+      nombre:"ZZ Prueba técnica", nombreBusqueda:"zz prueba tecnica",
+      fechaNacimiento:"2026-01-01", sexo:"m",
+      autorizadosUid:[], autorizados:[], estado:"inactivo",
+      creadoPor:correo, creadoEn:new Date().toISOString()
+    });
+    lineas.push(["Crear expediente","OK",true]);
+  }catch(e){ lineas.push(["Crear expediente", e.code||e.message, false]); }
+
+  if(idPrueba){
+    try{
+      await Nube.guardarMedicion(idPrueba,{id:"prueba", fecha:"2026-01-01", pesoKg:5,
+        capturadoPor:correo, capturadoEn:new Date().toISOString()});
+      lineas.push(["Guardar medición","OK",true]);
+    }catch(e){ lineas.push(["Guardar medición", e.code||e.message, false]); }
+
+    try{
+      await Nube.guardarDosis(idPrueba,"prueba",{fecha:"2026-01-01", responsable:"Prueba técnica",
+        registradoPor:correo, registradoEn:new Date().toISOString()});
+      lineas.push(["Registrar dosis","OK",true]);
+    }catch(e){ lineas.push(["Registrar dosis", e.code||e.message, false]); }
+  }
+
+  const todo = lineas.every(l=>l[2]);
+  aviso("d-alerts", todo?"ok":"block",
+    `<b>Prueba de escritura</b><br>` +
+    lineas.map(l=>`${l[2]?"✓":"✕"} ${l[0]}: <code>${esc(l[1])}</code>`).join("<br>") +
+    (todo
+      ? `<br>Todo funciona. ${idPrueba?`Borre el expediente <b>ZZ Prueba técnica</b> desde la consola de Firebase.`:""}`
+      : `<br>El bloque que falla es el de la primera línea con ✕. Esa es la parte de las reglas que hay que revisar.`));
+}
+
 async function verificarNube(){
   if(!Nube.activa()||!state.pacienteId){
     aviso("d-alerts","warn","Todavía no hay expediente en la nube que verificar.");
@@ -3940,6 +3986,9 @@ function renderDiagnostico(){
     fila("Cuenta", u?esc(u.email):"—", !!u) +
     fila("Correo verificado", u ? (u.emailVerified?"Sí":"No") : "—", u?u.emailVerified:null) +
     fila("En la lista de clínicos", u ? (esClinico(u.email)?"Sí":"No") : "—", u?esClinico(u.email):null) +
+    fila("Rol en esta sesión", state.sesion?.rol==="clinico"?"Edición":"Solo lectura",
+         state.sesion?.rol==="clinico") +
+    fila("Lista configurada", CLINICOS.map(c=>c.mail).join(", ")) +
     fila("UID de la cuenta", u?esc(u.uid):"—") +
     fila("Expediente en la nube", state.pacienteId ? esc(state.pacienteId) : "todavía no creado", !!state.pacienteId) +
     fila("Mediciones en pantalla", String(state.mediciones.length)) +
@@ -4344,26 +4393,38 @@ function mostrarProblema(e){
    expediente donde su correo está autorizado. */
 async function arrancarDatos(){
   if(!Nube.activa()) return;
-  if(puedeEditar()){
+
+  /* Quién entra decide qué se carga. Si esto se equivoca, un clínico
+     termina viendo mensajes escritos para un padre; por eso el rol se
+     recalcula aquí contra la lista, no se hereda de la sesión guardada. */
+  const correo = Nube.auth?.currentUser?.email || state.sesion?.email || "";
+  const clinico = esClinico(correo);
+  state.sesion.rol = clinico ? "clinico" : "responsable";
+
+  if(clinico){
     state.tab = state.pacienteId ? "captura" : "pacientes";
     render();
     buscarPacientes("");
-  }else{
-    try{
-      const mios = await Nube.misPacientes();
-      if(!mios.length){
-        aviso("d-alerts","warn","Su correo todavía no está vinculado a ningún expediente. Avísenos en la clínica para asociarlo.");
-        return;
-      }
-      await abrirExpediente(mios[0].id);
-      if(mios.length>1){
-        state.lista=mios;
-        aviso("d-alerts","ok",`Tiene ${mios.length} expedientes vinculados. Puede cambiar entre ellos en la pestaña Pacientes.`);
-      }
-    }catch(err){
-      console.error(err);
-      aviso("d-alerts","block","No se pudo cargar el expediente. Verifique su conexión e intente de nuevo.");
+    return;
+  }
+
+  try{
+    const mios = await Nube.misPacientes();
+    if(!mios.length){
+      aviso("d-alerts","warn",`El acceso <b>${esc(aIdentificador(correo))}</b> no está vinculado
+        a ningún expediente todavía. Avísenos en la clínica para asociarlo.`);
+      return;
     }
+    await abrirExpediente(mios[0].id);
+    if(mios.length>1){
+      state.lista=mios;
+      aviso("d-alerts","ok",`Tiene ${mios.length} expedientes vinculados.`);
+    }
+  }catch(err){
+    console.error("arrancarDatos", err);
+    const e=explicarError(err);
+    aviso("d-alerts","block",`${e.txt}
+      <button type="button" class="link" data-action="recargar-datos">Reintentar</button>`);
   }
 }
 
