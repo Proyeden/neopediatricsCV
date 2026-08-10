@@ -450,6 +450,8 @@ td.act{width:1%;white-space:nowrap}
   display:flex;align-items:center;justify-content:center;font-weight:700;font-size:var(--f-13)}
 .acceso .id{display:block;font-weight:650;word-break:break-all;line-height:1.3}
 .acceso .tp{display:block;font-size:var(--f-12);color:var(--muted)}
+.acceso .uid{display:block;font-size:11px;color:var(--muted);word-break:break-all;margin-top:2px}
+.acceso .uid code{font-size:10px}
 
 /* ============================================================
    HITOS DEL DESARROLLO
@@ -481,6 +483,9 @@ td.act{width:1%;white-space:nowrap}
    Una sola página, sin pestañas, sin tablas, sin jerga.
    ============================================================ */
 .pw{max-width:560px;margin:0 auto}
+.sin-vinculo{background:var(--surface-2);border-radius:10px;padding:var(--s3);font-size:var(--f-13);line-height:1.5}
+.sin-vinculo .uid{margin-top:var(--s1);color:var(--muted);word-break:break-all}
+.sin-vinculo code{font-size:11px}
 .pw-hero{
   background:linear-gradient(150deg,var(--brand) 0%,var(--np-blue) 100%);
   color:#fff;border-radius:18px;padding:var(--s5) var(--s4);text-align:center;margin-bottom:var(--s4);
@@ -1807,6 +1812,7 @@ const state = {
   lista:[],          // resultados de búsqueda de pacientes
   buscando:false,
   conteoNube:null,
+  sinVinculo:null,
   actualizadoEn:"",
   autorizadosNube:null,   // lo que Firestore tiene realmente en autorizadosUid
   sincronizando:false,
@@ -3559,10 +3565,27 @@ function renderPadres(){
   const host=document.getElementById("vista-padres");
   if(!host) return;
   const p=state.paciente, fn=parseISO(p.fn), hoy=parseISO(hoyISO());
-  if(!fn||!p.nombre){
-    host.innerHTML=`<div class="pw"><div class="pw-card"><div class="empty">
-      <b>Sin expediente vinculado</b>
-      Su correo todavía no está asociado a ningún niño. Avísenos en la clínica.</div></div></div>`;
+  if(state.sinVinculo || !fn || !p.nombre){
+    const s = state.sinVinculo || {};
+    host.innerHTML=`<div class="pw">
+      <div class="pw-card">
+        <div class="empty">
+          <b>Todavía no vemos ningún expediente</b>
+          Su acceso funciona, pero no está asociado a ningún niño.
+        </div>
+        ${s.uid?`<div class="sin-vinculo">
+          <div>Está dentro como <b>${esc(s.ident)}</b></div>
+          <div class="uid">Identificador de esta cuenta: <code>${esc(s.uid)}</code></div>
+          <p class="hint">Muéstrele estos dos datos a su médico: con ellos sabe en un vistazo
+            si el problema es que falta asociarla, o si este teléfono quedó con una cuenta de
+            prueba anterior.</p>
+        </div>`:""}
+        <div class="btn-row" style="margin-top:var(--s3)">
+          <button type="button" class="btn btn-ghost btn-sm" data-action="refrescar-padres">Volver a buscar</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-action="salir">Salir y entrar con otra cuenta</button>
+        </div>
+      </div>
+    </div>`;
     return;
   }
 
@@ -4318,6 +4341,7 @@ function renderAccesos(){
         <span class="id">${esc(a.ident)} ${etq}</span>
         <span class="tp">${a.tipo==="usuario"?"Usuario sin correo":"Correo"}${
           a.creadoEn?` · creado el ${fmtFecha(a.creadoEn.slice(0,10))}`:""}</span>
+        <span class="uid">Identificador de la cuenta: <code>${esc(a.uid||"—")}</code></span>
       </span>
       ${puedeEditar()?`<button type="button" class="link link-danger"
         data-action="acceso-quitar" data-i="${i}">Quitar</button>`:""}
@@ -4343,7 +4367,10 @@ async function revisarAccesos(){
     const faltan = state.accesos.filter(a=>!state.autorizadosNube.includes(a.uid));
     aviso("d-alerts", faltan.length?"warn":"ok", faltan.length
       ? `${faltan.length} acceso${faltan.length===1?"":"s"} sin vincular. Pulse <b>Vincular ahora</b>.`
-      : "Todos los accesos están vinculados. El responsable ya puede ver el expediente.");
+      : `Los accesos que la clínica registró están vinculados. Si aun así el responsable ve
+         «no vemos ningún expediente», compare el identificador que le aparece a él en pantalla
+         con el que figura aquí: si no coinciden, su teléfono quedó con una cuenta de una prueba
+         anterior y basta con que salga y vuelva a entrar.`);
   }catch(err){
     aviso("d-alerts","block",explicarError(err).txt);
   }
@@ -4776,10 +4803,17 @@ async function arrancarDatos(){
   try{
     const mios = await Nube.misPacientes();
     if(!mios.length){
-      aviso("d-alerts","warn",`El acceso <b>${esc(aIdentificador(correo))}</b> no está vinculado
-        a ningún expediente todavía. Avísenos en la clínica para asociarlo.`);
+      /* «No vinculado» tiene dos causas que se ven igual: que la clínica
+         no haya asociado la cuenta, o que este aparato haya quedado con
+         la sesión de una prueba anterior y esté entrando con otra cuenta
+         distinta sin pedir contraseña. Mostrar la cuenta y su
+         identificador permite distinguirlas en dos segundos. */
+      const u = Nube.auth.currentUser;
+      state.sinVinculo = {ident: aIdentificador(correo), uid: u?.uid || "—"};
+      renderPadres();
       return;
     }
+    state.sinVinculo = null;
     await abrirExpediente(mios[0].id);
     if(mios.length>1){
       state.lista=mios;
@@ -4834,6 +4868,7 @@ async function abrirExpediente(id){
     state.borrador = {fecha:hoyISO(), peso:"", talla:"", pc:"", muac:"", posicion:"auto", edema:false, nota:""};
     state.overrides.clear();
     state.tab = "captura";
+    state.sinVinculo = null;
     escucharExpediente(id);
     state.actualizadoEn = new Date().toLocaleString("es-GT",
       {day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
