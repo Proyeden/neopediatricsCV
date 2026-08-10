@@ -1311,8 +1311,11 @@ body.lectura .solo-clinico{display:none !important}
       </div>
       <div class="row row-2">
         <div class="field">
-          <label for="dm-resp">Responsable de la administración</label>
-          <input type="text" id="dm-resp" autocomplete="off">
+          <div class="lbl-row">
+            <label for="dm-resp">Responsable de la administración</label>
+            <button type="button" class="link" data-action="dm-yo">Fui yo</button>
+          </div>
+          <input type="text" id="dm-resp" autocomplete="off" placeholder="Quién aplicó la dosis">
         </div>
         <div class="field">
           <label for="dm-col">Colegiado</label>
@@ -3091,6 +3094,53 @@ function velocidad(ind, sexo, mesesIni, mesesFin, incremento){
 }
 const velocidadPeso = (sexo,a,b,g) => velocidad("peso",sexo,a,b,g);
 
+/* Busca en TODO el historial el par de visitas que sí cae en un intervalo
+   estándar, en vez de mirar solo las dos últimas. Si el niño vino al mes
+   y medio y otra vez tres semanas después, las dos últimas no sirven para
+   talla, pero la de hace tres meses contra la de hoy sí.
+
+   Criterio de elección, en este orden:
+     1. Que la visita final sea lo más reciente posible: interesa cómo va
+        creciendo ahora, no hace un año.
+     2. Que la separación se acerque lo más posible a un intervalo exacto.
+   Se recorre desde la última hacia atrás y se corta al encontrar la mejor
+   pareja que termine en la visita más nueva disponible. */
+function mejorPar(ind, campo){
+  const p=state.paciente, fn=parseISO(p.fn);
+  if(!fn||!p.sexo) return null;
+  const ms = medicionesOrdenadas().filter(m=>m[campo]!=null);
+  if(ms.length<2) return null;
+  const cfg=VELOCIDAD[ind];
+
+  let mejor=null;
+  for(let j=ms.length-1; j>=1; j--){
+    const mJ = edadMeses(fn, parseISO(ms[j].fecha));
+    let candidato=null;
+    for(let i=j-1; i>=0; i--){
+      const mI = edadMeses(fn, parseISO(ms[i].fecha));
+      const largo = mJ - mI;
+      if(largo > 7) break;                   // más allá del intervalo mayor
+      const n = cfg.intervalos.reduce((acc,x)=>
+        Math.abs(largo-x) <= TOLERANCIA[x] && (acc===null || Math.abs(largo-x) < Math.abs(largo-acc))
+          ? x : acc, null);
+      if(n===null) continue;
+      const desvio = Math.abs(largo-n);
+      if(!candidato || desvio < candidato.desvio) candidato={i, j, desvio};
+    }
+    if(candidato){ mejor=candidato; break; }  // el más reciente manda
+  }
+  if(!mejor) return null;
+
+  const a=ms[mejor.i], b=ms[mejor.j];
+  const mA=edadMeses(fn,parseISO(a.fecha)), mB=edadMeses(fn,parseISO(b.fecha));
+  const inc=(b[campo]-a[campo])*cfg.factor;
+  const v=velocidad(ind, p.sexo, mA, mB, inc);
+  if(v.motivo) return null;
+  return {v, inc, desde:a, hasta:b,
+          dias: diasEntre(parseISO(a.fecha), parseISO(b.fecha)),
+          consecutivas: mejor.j===mejor.i+1};
+}
+
 function catVelocidad(z){
   if(z==null) return null;
   if(z<-2) return ["Muy por debajo de lo esperado","block"];
@@ -3113,7 +3163,7 @@ function renderVelocidad(){
   const ms=medicionesOrdenadas();
   if(!fn||!p.sexo||ms.length<2){
     host.innerHTML=`<div class="empty"><b>Hacen falta dos mediciones</b>
-      El ritmo se calcula comparando la visita actual con la anterior.</div>`;
+      El ritmo se calcula comparando visitas.</div>`;
     return;
   }
   const b=ms[ms.length-2], a=ms[ms.length-1];
@@ -3121,35 +3171,53 @@ function renderVelocidad(){
   if(dias<=0){ host.innerHTML=`<div class="empty">Las dos últimas mediciones tienen la misma fecha.</div>`; return; }
   const mA=edadMeses(fn,parseISO(a.fecha)), mB=edadMeses(fn,parseISO(b.fecha));
 
-  const bloques=[], tarjetas=[];
+  const bloques=[], tarjetas=[], sinEstandar=[];
 
   [["peso","peso"],["talla","talla"],["pc","pc"]].forEach(([ind,campo])=>{
-    if(!a[campo]||!b[campo]) return;
     const cfg=VELOCIDAD[ind];
-    const inc=(a[campo]-b[campo])*cfg.factor;
-    const v=velocidad(ind,p.sexo,mB,mA,inc);
-    bloques.push(tarjetaVelocidadOMS(v, inc));
-    const zInd = ind==="peso"?"wfa":ind==="talla"?"lhfa":"hcfa";
-    const dz = zscore(zInd,p.sexo,mA,a[campo]) - zscore(zInd,p.sexo,mB,b[campo]);
-    const porMes = (a[campo]-b[campo])/(dias/30.4375);
-    tarjetas.push(tarjetaVel(
-      ind==="peso"?"Ganancia de peso":ind==="talla"?"Crecimiento en talla":"Perímetro cefálico",
-      ind==="peso" ? fmt(inc/dias,0)+" g/día" : fmt(porMes,2)+" cm/mes",
-      `${fmt(a[campo]-b[campo], ind==="peso"?2:1)} ${ind==="peso"?"kg":"cm"} en ${dias} días`, dz));
+
+    /* Contra el estándar de la OMS: se usa el mejor par de visitas del
+       historial, que no siempre son las dos últimas. */
+    const par = mejorPar(ind, campo);
+    if(par) bloques.push(tarjetaVelocidadOMS(par.v, par.inc, par));
+    else sinEstandar.push(cfg.nombre.replace("Velocidad de ",""));
+
+    /* Ganancia observada: siempre entre las dos últimas visitas, que es
+       lo que el clínico acaba de medir. */
+    if(a[campo]!=null && b[campo]!=null){
+      const inc=(a[campo]-b[campo])*cfg.factor;
+      const zInd = ind==="peso"?"wfa":ind==="talla"?"lhfa":"hcfa";
+      const dz = zscore(zInd,p.sexo,mA,a[campo]) - zscore(zInd,p.sexo,mB,b[campo]);
+      const porMes = (a[campo]-b[campo])/(dias/30.4375);
+      tarjetas.push(tarjetaVel(
+        ind==="peso"?"Ganancia de peso":ind==="talla"?"Crecimiento en talla":"Perímetro cefálico",
+        ind==="peso" ? fmt(inc/dias,0)+" g/día" : fmt(porMes,2)+" cm/mes",
+        `${fmt(a[campo]-b[campo], ind==="peso"?2:1)} ${ind==="peso"?"kg":"cm"} en ${dias} días`, dz));
+    }
   });
 
-  if(!tarjetas.length){ host.innerHTML=`<div class="empty">Las dos últimas visitas no comparten ninguna medición.</div>`; return; }
+  if(!tarjetas.length && !bloques.length){
+    host.innerHTML=`<div class="empty">Las visitas no comparten ninguna medición.</div>`;
+    return;
+  }
 
-  host.innerHTML = `<p class="hint" style="margin:0 0 var(--s3)">
-      Entre el ${fmtFecha(b.fecha)} y el ${fmtFecha(a.fecha)} · ${dias} días.</p>
-    ${bloques.join("")}
+  const aviso = sinEstandar.length
+    ? `<div class="alert alert-warn" style="margin:0 0 var(--s3)"><div>
+        Sin estándar de velocidad todavía para <b>${sinEstandar.join(" y ")}</b>: no hay dos visitas
+        separadas por un intervalo que la OMS defina. Se resuelve solo con la siguiente medición;
+        mientras tanto, abajo queda el cambio observado.</div></div>`
+    : "";
+
+  host.innerHTML = `${bloques.join("")}${aviso}
+    <p class="hint" style="margin:0 0 var(--s3)">
+      Cambio observado entre el ${fmtFecha(b.fecha)} y el ${fmtFecha(a.fecha)} · ${dias} días.</p>
     <div class="vel-grid">${tarjetas.join("")}</div>
     <p class="hint" style="margin-top:var(--s3)">
-      El cambio de z-score complementa lo anterior: una caída mayor a <b>0.67 DE</b> en la posición
-      del niño señala desaceleración aunque siga creciendo.</p>`;
+      Una caída mayor a <b>0.67 DE</b> en la posición del niño señala desaceleración aunque
+      siga creciendo.</p>`;
 }
 
-function tarjetaVelocidadOMS(v, incremento){
+function tarjetaVelocidadOMS(v, incremento, par){
   if(!v) return "";
   if(v.motivo==="intervalo"){
     return `<div class="alert alert-warn" style="margin:0 0 var(--s3)"><div>
@@ -3173,7 +3241,10 @@ function tarjetaVelocidadOMS(v, incremento){
         <div class="k">${v.cfg.nombre} · estándar OMS ${v.intervalo} ${v.intervalo===1?"mes":"meses"}</div>
         <div class="v num">${fmtZ(v.z)}<span class="u">DE</span></div>
         <div class="sub">Aumentó <b>${fmt(incremento,d)} ${u}</b>; la mediana para este intervalo es
-          <b>${fmt(v.mediana,d)} ${u}</b> y el percentil 3 está en <b>${fmt(v.p3,d)} ${u}</b>.</div>
+          <b>${fmt(v.mediana,d)} ${u}</b> y el percentil 3 está en <b>${fmt(v.p3,d)} ${u}</b>.
+          ${par?`<br><span style="color:var(--muted)">Entre la visita del ${fmtFecha(par.desde.fecha)}
+          y la del ${fmtFecha(par.hasta.fecha)} · ${par.dias} días${
+          par.consecutivas?"":" · no son visitas consecutivas"}.</span>`:""}</div>
       </div>
       <div class="cat" style="color:${color}">${txt}<div class="pc">${fmtPercentil(v.z)}</div></div>
     </div>
@@ -3662,6 +3733,12 @@ document.addEventListener("click", e=>{
   else if(a==="acceso-cerrar") document.getElementById("acceso-modal").hidden=true;
   else if(a==="am-tipo"){ tipoAcceso=b.dataset.t; renderTipoAcceso(); }
   else if(a==="am-generar") document.getElementById("am-pass").value=claveSugerida();
+  else if(a==="dm-yo"){
+    const yo=datosClinico(state.sesion?.email);
+    document.getElementById("dm-resp").value = yo?.nombre || "";
+    document.getElementById("dm-col").value  = yo?.colegiado || "";
+    document.getElementById("dm-resp").focus();
+  }
   else if(a==="acceso-quitar"){
     if(!puedeEditar()) return;
     const i=+b.dataset.i, ac=state.accesos[i];
@@ -3908,7 +3985,6 @@ function abrirDosis(id){
   dosisEditando = {e, key:id};
   const d = state.dosis[id] || {};
   const cat = CATALOGO[e.bio] || {marcas:[], comp:"", via:"IM"};
-  const yo = datosClinico(state.sesion?.email);
   const fn = parseISO(state.paciente.fn);
 
   document.getElementById("dm-titulo").textContent = e.bio;
@@ -3931,8 +4007,12 @@ function abrirDosis(id){
   document.getElementById("dm-fecha").value = d.fecha || state.borrador.fecha || hoyISO();
   document.getElementById("dm-via").value   = d.via || cat.via || "IM";
   document.getElementById("dm-sitio").value = d.sitio || "";
-  document.getElementById("dm-resp").value  = d.responsable || yo?.nombre || "";
-  document.getElementById("dm-col").value   = d.colegiado || yo?.colegiado || "";
+  /* No se rellena solo: quien administra la dosis no siempre es quien
+     teclea, y un nombre puesto por omisión se queda ahí sin que nadie lo
+     revise. En un registro con valor médico-legal eso es peor que un
+     campo vacío. El botón de abajo lo llena en un toque cuando sí es él. */
+  document.getElementById("dm-resp").value  = d.responsable || "";
+  document.getElementById("dm-col").value   = d.colegiado || "";
   document.getElementById("dm-obs").value   = d.observaciones || "";
   document.getElementById("dm-borrar").hidden = !d.fecha;
   document.getElementById("dm-alerts").innerHTML = "";
@@ -4027,17 +4107,19 @@ function explicarError(err){
     if(yo && !yo.emailVerified && esClinico(yo.email))
       return {tipo:"verificar", txt:`Firestore rechazó la escritura porque <b>su correo todavía no
         está verificado</b>. Las reglas exigen verificación para el personal clínico.`};
-    return {tipo:"reglas", txt:`Firestore rechazó la escritura (<b>permiso denegado</b>). Revise que
-      el archivo reglas-firestore.rules esté publicado y que
-      <b>${esc(Nube.auth?.currentUser?.email||"su correo")}</b> figure en la lista <code>clinicos()</code>
-      de las reglas.`};
+    return {tipo:"reglas", txt:`Firestore rechazó la escritura: <b>permiso denegado</b>.
+      La cuenta es <b>${esc(Nube.auth?.currentUser?.email||"—")}</b>
+      (verificada: ${Nube.auth?.currentUser?.emailVerified?"sí":"no"}).
+      Causas posibles, en orden: las reglas no están publicadas todavía; el correo de las reglas
+      no coincide exactamente con este; o la base de datos de Firestore no se ha creado.
+      Pruebe con el archivo <code>reglas-minimas.rules</code> para descartar.`};
   }
   if(code==="unavailable" || code==="failed-precondition")
     return {tipo:"red", txt:"Sin conexión con Firestore. El dato quedó guardado en este dispositivo."};
   if(code==="unauthenticated")
     return {tipo:"sesion", txt:"La sesión expiró. Vuelva a entrar."};
   return {tipo:"otro", txt:`Firestore devolvió <code>${esc(code||err?.message||"error")}</code>.
-    El dato quedó guardado en este dispositivo.`};
+    El dato quedó guardado en este dispositivo. Copie ese código si necesita reportarlo.`};
 }
 
 async function conSync(promesa, etiqueta){
