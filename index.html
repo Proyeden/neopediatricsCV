@@ -397,6 +397,10 @@ td.act{width:1%;white-space:nowrap}
 #tbl-vac .marca{font-weight:600;color:var(--brand);font-size:var(--f-12);margin-top:2px}
 #tbl-vac .vence{color:var(--muted);font-size:11px;margin-top:2px}
 #tbl-vac .vacio{color:var(--line-strong)}
+#tbl-vac tr.omitida{opacity:.55}
+#tbl-vac tr.omitida .vac-nom{text-decoration:line-through;text-decoration-color:var(--line-strong)}
+.pill-na{background:var(--surface-2);color:var(--muted)}
+.motivo{color:var(--muted);font-size:11px;margin-top:2px;font-style:italic}
 #tbl-vac td{vertical-align:top}
 #tbl-vac input[type=date],#tbl-vac input[type=text]{
   padding:5px 7px;border:1px solid var(--line-strong);border-radius:6px;
@@ -708,6 +712,15 @@ body.lectura .solo-clinico{display:none !important}
 .dg-v{font-weight:650;word-break:break-all;text-align:right}
 .dg-v.si{color:var(--ok)} .dg-v.no{color:var(--danger)}
 
+.actualizacion{
+  display:flex;gap:var(--s3);align-items:center;flex-wrap:wrap;
+  background:var(--brand-soft);border:1px solid var(--line);border-left:5px solid var(--brand);
+  border-radius:var(--r);padding:var(--s3) var(--s4);margin-bottom:var(--s4);
+  font-size:var(--f-13);font-weight:600;color:var(--np-navy);
+}
+.actualizacion[hidden]{display:none !important}
+.actualizacion .btn{margin-left:auto}
+
 .problema{
   display:flex;gap:var(--s3);align-items:flex-start;
   background:var(--danger-soft);border:1px solid #EFC3BE;border-left:5px solid var(--danger);
@@ -887,6 +900,11 @@ body.lectura .solo-clinico{display:none !important}
 </div>
 
 <div class="wrap">
+
+  <div class="actualizacion no-print" id="actualizacion" hidden>
+    <span>Hay una versión nueva de la herramienta.</span>
+    <button type="button" class="btn btn-primary btn-sm">Actualizar</button>
+  </div>
 
   <div class="problema no-print" id="problema" hidden></div>
 
@@ -1070,6 +1088,8 @@ body.lectura .solo-clinico{display:none !important}
       <header>
         <h2>Esquema e inmunizaciones</h2>
         <span class="hint" style="margin-left:auto" id="vac-resumen"></span>
+        <button type="button" class="btn btn-ghost btn-sm solo-clinico" data-action="dosis-extra"
+          style="margin-left:var(--s3)">Vacuna fuera del esquema</button>
       </header>
       <div class="tbl-scroll"><table id="tbl-vac"></table></div>
     </div>
@@ -1418,10 +1438,6 @@ const ESQUEMA_BASE = [
 
   {id:"hexa-3",   m:6,  bio:"Hexavalente",          clase:"primaria", n:3},
   {id:"pcv-3",    m:6,  bio:"Neumococo conjugado",  clase:"primaria", n:3},
-  {id:"flu-1",    m:6,  bio:"Influenza",            clase:"primaria", n:1,
-                  nota:"Primera temporada: se aplican dos dosis separadas por cuatro semanas."},
-  {id:"flu-2",    m:7,  bio:"Influenza",            clase:"primaria", n:2,
-                  nota:"Completa la primera temporada. De aquí en adelante es una dosis por año."},
 
   {id:"men-1",    m:7,  bio:"Meningococo ACWY",     clase:"primaria", n:1},
   {id:"men-2",    m:9,  bio:"Meningococo ACWY",     clase:"primaria", n:2},
@@ -1439,6 +1455,55 @@ const ESQUEMA_BASE = [
   {id:"spr-2",    m:48, bio:"SPR",                  clase:"primaria", n:2},
   {id:"var-2",    m:48, bio:"Varicela",             clase:"primaria", n:2}
 ];
+
+/* ============================================================
+   INFLUENZA: SE ANCLA A LA TEMPORADA, NO AL CUMPLEAÑOS
+   Guatemala está en el hemisferio norte y la campaña arranca en octubre.
+   Calcular «a los 6 y 7 meses de edad» daba fechas objetivo en cualquier
+   mes del año, incluyendo abril o julio, cuando no hay biológico de la
+   temporada en refrigeradora.
+
+   Regla que se aplica: la serie primaria son dos dosis separadas cuatro
+   semanas, en la primera temporada en la que el niño ya tiene 6 meses
+   cumplidos al 1 de octubre. De ahí en adelante, una dosis por temporada
+   hasta los 5 años.
+
+   MES_TEMPORADA está aquí arriba a propósito: si algún año la campaña se
+   adelanta o se atrasa, se cambia este número y todos los expedientes se
+   recalculan solos.
+   ============================================================ */
+const MES_TEMPORADA = 10;   // octubre
+
+function temporadasInfluenza(fn){
+  if(!fn) return [];
+  const salida=[];
+  const inicio = fn.getFullYear();
+  let primera = null;
+
+  for(let y=inicio; y<=inicio+6; y++){
+    const arranque = new Date(y, MES_TEMPORADA-1, 1);
+    const meses = edadMeses(fn, arranque);
+    if(meses < 6) continue;      // todavía no le toca ninguna
+    if(meses > 60) break;        // fuera del alcance de esta herramienta
+
+    if(primera===null){
+      primera = y;
+      /* Primera temporada: dos dosis con cuatro semanas de diferencia. */
+      salida.push({id:`flu-${y}-1`, bio:"Influenza", clase:"primaria", n:1,
+        temporada:y, objetivo:toISO(arranque), grupo:`temporada:${y}`,
+        nota:"Primera temporada del niño: se aplican dos dosis separadas por cuatro semanas."});
+      const segunda = new Date(y, MES_TEMPORADA-1, 29);
+      salida.push({id:`flu-${y}-2`, bio:"Influenza", clase:"primaria", n:2,
+        temporada:y, objetivo:toISO(segunda), grupo:`temporada:${y}`,
+        nota:"Completa la primera temporada. Puede omitirse si se decide una sola dosis; use «No aplica»."});
+    }else{
+      salida.push({id:`flu-${y}`, bio:"Influenza", clase:"anual",
+        temporada:y, objetivo:toISO(arranque), grupo:`temporada:${y}`,
+        nota:"Una dosis por temporada, cuando llegue el biológico del año."});
+    }
+  }
+  return salida;
+}
 
 /* Qué previene cada biológico. Se muestra junto al nombre para que el
    registro diga qué se está administrando, no solo cómo se llama. */
@@ -1464,23 +1529,52 @@ function etiquetaDosis(e){
     case "unica":    return "dosis única";
     case "refuerzo": return e.n>1 ? `${ORDINAL[e.n]} dosis de refuerzo` : "dosis de refuerzo";
     case "anual":    return `dosis anual · temporada ${e.temporada}`;
-    default:         return `${ORDINAL[e.n]} dosis de la serie primaria`;
+    case "extra":    return e.etiquetaLibre || "fuera del esquema";
+    default:         return e.temporada
+      ? `${ORDINAL[e.n]} dosis de la temporada ${e.temporada}`
+      : `${ORDINAL[e.n]} dosis de la serie primaria`;
   }
 }
 const nombreDosis = e => `${e.bio} · ${etiquetaDosis(e)}`;
 
-/* El esquema depende del paciente: las dosis anuales de influenza se
-   generan una por temporada desde la segunda hasta los 5 años. */
+/* ============================================================
+   EL ESQUEMA DE ESTE PACIENTE
+   No es una lista fija: se arma para cada niño. Las de edad salen de
+   ESQUEMA_BASE, las de influenza de la temporada, y se agregan las
+   vacunas fuera del esquema que se le hayan aplicado. Cada renglón
+   carga su propia fecha objetivo, en vez de calcularla quien la use.
+   ============================================================ */
 function esquema(){
   const fn = parseISO(state.paciente.fn);
-  const items = ESQUEMA_BASE.map(e=>({...e}));
-  for(let m=18; m<=54; m+=12){
-    const temporada = fn ? sumarMeses(fn,m).getFullYear() : "—";
-    items.push({id:`flu-anual-${m}`, m, bio:"Influenza", clase:"anual", temporada,
-                nota:"Una dosis por temporada. La fecha objetivo es referencial: se aplica cuando llega el biológico de la temporada."});
-  }
-  return items
-    .map(e=>({...e, etiqueta:nombreDosis(e), protege:PROTEGE[e.bio]||""}))
+
+  const base = ESQUEMA_BASE.map(e=>({
+    ...e,
+    objetivo: fn ? toISO(sumarMeses(fn, e.m)) : "",
+    grupo: "edad:"+e.m
+  }));
+
+  const flu = temporadasInfluenza(fn).map(e=>({
+    ...e,
+    m: fn ? edadMeses(fn, parseISO(e.objetivo)) : 0
+  }));
+
+  /* Las vacunas fuera del esquema viven dentro del propio registro de la
+     dosis: no hay una segunda lista que mantener sincronizada. */
+  const extras = Object.entries(state.dosis)
+    .filter(([k,d])=> d && d.clase==="extra" && !d.anulada)
+    .map(([k,d])=>({
+      id:k, bio:d.biologico||"Vacuna", clase:"extra",
+      etiquetaLibre:d.etiquetaLibre||"fuera del esquema",
+      objetivo:d.fecha||"", grupo:"extra",
+      m: fn && d.fecha ? edadMeses(fn, parseISO(d.fecha)) : 999
+    }));
+
+  return [...base, ...flu, ...extras]
+    .map(e=>({...e,
+      etiqueta: nombreDosis(e),
+      protege: PROTEGE[e.bio] || "",
+      omitida: !!state.omisiones[e.id]
+    }))
     .sort((a,b)=> a.m-b.m || a.bio.localeCompare(b.bio) || (a.n||0)-(b.n||0));
 }
 
@@ -1527,6 +1621,12 @@ const FIREBASE_CONFIG = {
    recuperar su contraseña sola. Solo la clínica puede restablecerla.
    ============================================================ */
 const DOMINIO_USUARIO = "usuario.neopediatrics.app";
+
+/* Se muestra abajo de la pantalla del encargado. Cuando algo no cuadra
+   entre dos aparatos, lo primero que hay que descartar es que uno esté
+   corriendo una versión distinta del archivo. Sin este número, eso es
+   imposible de saber por teléfono. */
+const VERSION_APP = "2026-08-10";
 
 const normalizarUsuario = u => String(u||"").trim().toLowerCase()
   .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
@@ -1674,6 +1774,7 @@ const state = {
   lista:[],          // resultados de búsqueda de pacientes
   buscando:false,
   conteoNube:null,
+  actualizadoEn:"",
   sincronizando:false,
   pendPaciente:false,
   pendMediciones:new Set(),
@@ -1687,6 +1788,7 @@ const state = {
   mediciones:[],   // {id, fecha, peso, talla, pc, nota, capturadoEn}
   dosis:{},        // id del renglón del esquema -> registro completo de la dosis
   hitos:{},        // id del hito -> {fecha, nota}
+  omisiones:{},    // id del renglón -> {motivo, por, fecha} — dosis que no aplican a este niño
   borrador:{fecha:hoyISO(), peso:"", talla:"", pc:"", muac:"", posicion:"auto", edema:false, nota:""},
   overrides:new Set()  // avisos que el clínico ya confirmó explícitamente
 };
@@ -2128,6 +2230,39 @@ const Nube = {
   /* Cuenta lo que hay REALMENTE en la nube, para poder contrastarlo con
      lo que hay en pantalla. Sin esto, «guardado» es una promesa que nadie
      verifica. */
+  /* Lee el documento como está guardado, sin pasar por el mapeo. Sirve
+     para comprobar qué UID quedaron autorizados de verdad. */
+  /* Escucha en vivo. Firestore avisa al instante cuando el documento
+     cambia, así que la pantalla del encargado se actualiza sola en el
+     momento en que el médico guarda la vacuna: sin botones, sin cerrar
+     sesión, sin borrar caché.
+
+     Se usa SOLO en la vista del encargado. Para el clínico sería
+     peligroso: si está escribiendo una medición y llega un cambio desde
+     otro aparato, le sobrescribiría lo que tiene a medio capturar. */
+  escuchar(id, alCambiar){
+    const {doc,collection,onSnapshot} = this.fs;
+    const paradas = [
+      onSnapshot(doc(this.db,"pacientes",id),
+        s => s.exists() && alCambiar("paciente", {id:s.id, ...s.data()}),
+        e => console.warn("escucha paciente", e.code)),
+      onSnapshot(collection(this.db,"pacientes",id,"mediciones"),
+        s => alCambiar("mediciones", s.docs.map(x=>({id:x.id, ...x.data()}))),
+        e => console.warn("escucha mediciones", e.code)),
+      onSnapshot(collection(this.db,"pacientes",id,"dosis"),
+        s => alCambiar("dosis", s.docs.reduce((a,x)=>{ const v=x.data();
+              if(!v.anulada) a[v.clave||x.id]=v; return a; },{})),
+        e => console.warn("escucha dosis", e.code))
+    ];
+    return ()=> paradas.forEach(p=>{ try{ p(); }catch(e){} });
+  },
+
+  async leerCrudo(id){
+    const {doc,getDoc} = this.fs;
+    const s = await getDoc(doc(this.db,"pacientes",id));
+    return s.exists() ? s.data() : null;
+  },
+
   async contar(id){
     const {collection,getDocs} = this.fs;
     const [ms,ds] = await Promise.all([
@@ -2320,6 +2455,7 @@ function pacienteADocumento(p, sesionMail){
     autorizadosUid,
     telefono: p.tel,
     hitos: state.hitos,
+    omisiones: state.omisiones,
     accesosDetalle: state.accesos,
     sede: state.sede,
     estado: "activo",
@@ -2859,12 +2995,16 @@ function renderTablaMediciones(){
 }
 
 /* ---------- Inmunizaciones ---------- */
-function estadoDosis(fnDate, targetMes, aplicada, hoy){
-  if(aplicada&&aplicada.fecha) return {k:"ok",txt:"Aplicada"};
-  if(!fnDate) return {k:"wait",txt:"Pendiente"};
-  const objetivo=sumarMeses(fnDate,targetMes);
-  const dias=diasEntre(objetivo,hoy);
-  if(dias>30) return {k:"late",txt:`Atrasada ${Math.floor(dias/30)} m`};
+/* Recibe la fecha objetivo ya calculada. Cada renglón la trae consigo,
+   porque una dosis de edad y una de temporada se calculan distinto. */
+function estadoDosis(e, aplicada, hoy){
+  if(e.omitida) return {k:"na", txt:"No aplica"};
+  if(aplicada&&aplicada.fecha&&!aplicada.anulada) return {k:"ok",txt:"Aplicada"};
+  if(e.clase==="extra") return {k:"ok",txt:"Aplicada"};
+  if(!e.objetivo) return {k:"wait",txt:"Pendiente"};
+  const dias=diasEntre(parseISO(e.objetivo),hoy);
+  const holgura = e.clase==="anual" || e.temporada ? 60 : 30;   // la campaña dura meses
+  if(dias>holgura) return {k:"late",txt:`Atrasada ${Math.max(1,Math.floor(dias/30))} m`};
   if(dias>=-15) return {k:"due",txt:"Toca ahora"};
   return {k:"wait",txt:"Pendiente"};
 }
@@ -2880,31 +3020,47 @@ function etiquetaEdad(m){
 function gruposEsquema(){
   const g=[];
   esquema().forEach(e=>{
-    let bloque=g.find(x=>x.m===e.m);
-    if(!bloque){ bloque={m:e.m, items:[]}; g.push(bloque); }
+    let bloque=g.find(x=>x.clave===e.grupo);
+    if(!bloque){
+      bloque={clave:e.grupo, m:e.m, objetivo:e.objetivo, items:[],
+              tipo: e.grupo.startsWith("temporada:") ? "temporada"
+                  : e.grupo==="extra" ? "extra" : "edad",
+              temporada: e.temporada};
+      g.push(bloque);
+    }
     bloque.items.push(e);
+    if(e.m < bloque.m) bloque.m = e.m;
   });
-  return g.sort((a,b)=>a.m-b.m);
+  return g.sort((a,b)=> (a.tipo==="extra") - (b.tipo==="extra") || a.m-b.m);
+}
+
+function rotuloGrupo(b){
+  if(b.tipo==="temporada") return `Temporada ${b.temporada}`;
+  if(b.tipo==="extra") return "Fuera del esquema";
+  return etiquetaEdad(b.m);
 }
 
 function renderVacunas(){
   const p=state.paciente, fn=parseISO(p.fn), hoy=parseISO(hoyISO());
   const t=document.getElementById("tbl-vac");
-  let nOk=0,nLate=0,nDue=0;
+  let nOk=0,nLate=0,nDue=0,nNa=0;
 
   const cuerpo = gruposEsquema().map(bloque=>{
-    const objetivo = fn ? toISO(sumarMeses(fn,bloque.m)) : "";
-    const estados = bloque.items.map(e=>estadoDosis(fn,e.m,state.dosis[e.id],hoy));
-    const total=bloque.items.length;
-    const hechas=estados.filter(s=>s.k==="ok").length;
-    const peor = estados.some(s=>s.k==="late") ? "late" : estados.some(s=>s.k==="due") ? "due"
-               : hechas===total ? "ok" : "wait";
-    const rotulo = {ok:"Completa",late:"Atrasada",due:"Toca ahora",wait:"Pendiente"}[peor];
+    const objetivo = bloque.objetivo || "";
+    const estados = bloque.items.map(e=>estadoDosis(e,state.dosis[e.id],hoy));
+    const aplican = estados.filter(s=>s.k!=="na");
+    const total=aplican.length;
+    const hechas=aplican.filter(s=>s.k==="ok").length;
+    const peor = aplican.some(s=>s.k==="late") ? "late" : aplican.some(s=>s.k==="due") ? "due"
+               : (total && hechas===total) ? "ok" : total ? "wait" : "na";
+    const rotulo = {ok:"Completa",late:"Atrasada",due:"Toca ahora",wait:"Pendiente",na:"No aplica"}[peor];
 
     const cab = `<tr class="grp">
       <td colspan="8">
-        <span class="grp-edad">${etiquetaEdad(bloque.m)}</span>
-        ${fn?`<span class="grp-fecha">alrededor del ${fmtFecha(objetivo)}</span>`:""}
+        <span class="grp-edad">${rotuloGrupo(bloque)}</span>
+        ${objetivo&&bloque.tipo!=="extra"
+          ? `<span class="grp-fecha">${bloque.tipo==="temporada"?"campaña desde el":"alrededor del"} ${fmtFecha(objetivo)}</span>`
+          : ""}
         <span class="pill pill-${peor}">${rotulo}</span>
         <span class="grp-cuenta">${hechas} de ${total}</span>
       </td></tr>`;
@@ -2912,15 +3068,18 @@ function renderVacunas(){
     const filas = bloque.items.map(e=>{
       const key=e.id;
       const d=state.dosis[key];
-      const st=estadoDosis(fn,e.m,d,hoy);
+      const st=estadoDosis(e,d,hoy);
       if(st.k==="ok")nOk++; else if(st.k==="late")nLate++; else if(st.k==="due")nDue++;
-      const desfase = d&&d.fecha&&fn ? diasEntre(sumarMeses(fn,e.m),parseISO(d.fecha)) : null;
+      else if(st.k==="na")nNa++;
+      const desfase = d&&d.fecha&&e.objetivo ? diasEntre(parseISO(e.objetivo),parseISO(d.fecha)) : null;
       const cat = CATALOGO[e.v];
-      return `<tr>
+      return `<tr class="${e.omitida?"omitida":""}">
         <td class="vac-nom">${e.bio}
           <div class="dosis-rol">${etiquetaDosis(e)}</div>
           ${e.protege?`<div class="protege">Previene ${e.protege}</div>`:""}
-          ${d?.nombreComercial?`<div class="marca">${esc(d.nombreComercial)}</div>`:""}</td>
+          ${d?.nombreComercial?`<div class="marca">${esc(d.nombreComercial)}</div>`:""}
+          ${e.omitida&&state.omisiones[key]?.motivo
+            ? `<div class="motivo">No aplica: ${esc(state.omisiones[key].motivo)}</div>`:""}</td>
         <td data-l="Composición">${esc(d?.composicion || (d?.fecha ? "" : "") )||'<span class="vacio">—</span>'}</td>
         <td class="num" data-l="Lote">${esc(d?.lote||"")||'<span class="vacio">—</span>'}
           ${d?.vencimiento?`<div class="vence">vence ${esc(d.vencimiento)}</div>`:""}</td>
@@ -2932,7 +3091,12 @@ function renderVacunas(){
         <td data-l="Observaciones">${esc(d?.observaciones||"")||'<span class="vacio">—</span>'}</td>
         <td class="act"><span class="pill pill-${st.k}">${st.txt}</span></td>
         <td class="act no-print">${puedeEditar()
-          ? `<button type="button" class="btn btn-ghost btn-sm" data-action="dosis-abrir" data-key="${key}">${d?.fecha?"Editar":"Registrar"}</button>`
+          ? (e.omitida
+              ? `<button type="button" class="link" data-action="omitir" data-id="${key}">Volver a incluir</button>`
+              : `<button type="button" class="btn btn-ghost btn-sm" data-action="dosis-abrir" data-key="${key}">${d?.fecha?"Editar":"Registrar"}</button>` +
+                (d?.fecha||e.clase==="extra" ? "" :
+                 `<button type="button" class="link" data-action="omitir" data-id="${key}"
+                    style="display:block;margin-top:4px">No aplica</button>`))
           : ""}</td>
       </tr>`;
     }).join("");
@@ -2947,7 +3111,9 @@ function renderVacunas(){
     </tr></thead><tbody>${cuerpo}</tbody>`;
 
   document.getElementById("vac-resumen").innerHTML =
-    `<b>${nOk}</b> aplicadas · <b style="color:var(--danger)">${nLate}</b> atrasadas · <b style="color:var(--warn)">${nDue}</b> tocan ahora`;
+    `<b>${nOk}</b> aplicadas · <b style="color:var(--danger)">${nLate}</b> atrasadas · ` +
+    `<b style="color:var(--warn)">${nDue}</b> tocan ahora` +
+    (nNa?` · ${nNa} no aplican`:"");
 }
 
 /* Panel de vacunas en la pantalla de captura: lo que toca hoy y lo
@@ -2961,7 +3127,7 @@ function renderVacQuick(){
     return;
   }
   const items=esquema().map(e=>({e, key:e.id, d:state.dosis[e.id],
-                                 st:estadoDosis(fn,e.m,state.dosis[e.id],hoy)}));
+                                 st:estadoDosis(e,state.dosis[e.id],hoy)}));
   const atrasadas=items.filter(i=>i.st.k==="late");
   const tocan=items.filter(i=>i.st.k==="due");
   const hoyAplicadas=items.filter(i=>i.d?.fecha===state.borrador.fecha);
@@ -2970,7 +3136,8 @@ function renderVacQuick(){
   const fila=i=>`<tr>
       <td><b>${i.e.bio}</b> <span style="color:var(--muted)">${etiquetaDosis(i.e)}</span>
         <div style="color:var(--muted);font-size:var(--f-12)">
-        ${etiquetaEdad(i.e.m)} · objetivo ${fmtFecha(toISO(sumarMeses(fn,i.e.m)))}</div></td>
+        ${i.e.temporada?`temporada ${i.e.temporada}`:etiquetaEdad(i.e.m)}${
+          i.e.objetivo?` · objetivo ${fmtFecha(i.e.objetivo)}`:""}</div></td>
       <td class="act"><span class="pill pill-${i.st.k}">${i.st.txt}</span></td>
       <td class="act"><button type="button" class="btn btn-ghost btn-sm"
         data-action="dosis-abrir" data-key="${i.key}">Registrar</button></td>
@@ -2993,8 +3160,9 @@ function renderVacQuick(){
       <button type="button" class="link" data-action="tab" data-tab="vacunas">Abrir el esquema completo</button></p>`;
   } else if(!hoyAplicadas.length){
     html+=`<div class="alert alert-ok"><div>${ESTRELLA} Esquema al día.
-      ${proxima?`La siguiente es <b>${esc(proxima.e.etiqueta)}</b> (${etiquetaEdad(proxima.e.m)}) alrededor del
-      ${fmtFecha(toISO(sumarMeses(fn,proxima.e.m)))}.`:"No quedan dosis pendientes en el esquema."}</div></div>`;
+      ${proxima?`La siguiente es <b>${esc(proxima.e.etiqueta)}</b>${
+        proxima.e.objetivo?`, alrededor del ${fmtFecha(proxima.e.objetivo)}`:""}.`
+        :"No quedan dosis pendientes en el esquema."}</div></div>`;
   }
   host.innerHTML=html;
 }
@@ -3386,7 +3554,7 @@ function renderPadres(){
       <div class="l">${etq}</div></div>`;
 
   const items = esquema().map(e=>({e, d:state.dosis[e.id],
-                                   st:estadoDosis(fn,e.m,state.dosis[e.id],hoy)}));
+                                   st:estadoDosis(e,state.dosis[e.id],hoy)}));
   const aplicadas = items.filter(i=>i.st.k==="ok");
   const pendientes = items.filter(i=>i.st.k==="late"||i.st.k==="due").slice(0,4);
   const proxima = items.filter(i=>i.st.k==="wait")[0];
@@ -3433,7 +3601,7 @@ function renderPadres(){
       <div class="pw-vac"><span class="t">${ESTRELLA}</span>
         <span class="n"><b>Está al día con su esquema.</b>${proxima?`<br>
         <span style="color:var(--muted)">La siguiente es ${esc(proxima.e.bio)}, alrededor del
-        ${fmtFecha(toISO(sumarMeses(fn,proxima.e.m)))}.</span>`:""}</span></div>
+        ${proxima.e.objetivo?fmtFecha(proxima.e.objetivo):"—"}.</span>`:""}</span></div>
     </div>`}
 
     ${aplicadas.length?`
@@ -3458,6 +3626,10 @@ function renderPadres(){
 
     <div class="pw-cta">
       <button type="button" class="btn btn-primary" data-action="doc-open">Descargar el carné en PDF</button>
+      <p class="hint" style="text-align:center;margin-top:var(--s2)">
+        Esta pantalla se actualiza sola cuando su médico anota algo nuevo.
+        <button type="button" class="link" data-action="refrescar-padres">Buscar ahora</button>
+      </p>
     </div>
 
     <p class="pw-pie">
@@ -3469,6 +3641,7 @@ function renderPadres(){
       <button type="button" class="link" data-action="clave-cambiar">Cambiar mi contraseña</button>
       &nbsp;·&nbsp;
       <button type="button" class="link" data-action="salir">Cerrar sesión</button>
+      <br><span style="opacity:.7">Información al ${esc(state.actualizadoEn||"—")} · versión ${VERSION_APP}</span>
     </p>
   </div>`;
 }
@@ -3479,7 +3652,7 @@ function renderTabBadge(){
   if(!b) return;
   let n=0;
   if(fn) esquema().forEach(e=>{
-    const st=estadoDosis(fn,e.m,state.dosis[e.id],hoy);
+    const st=estadoDosis(e,state.dosis[e.id],hoy);
     if(st.k==="late"||st.k==="due") n++;
   });
   b.innerHTML = "Inmunizaciones" + (n?` <span class="badge">${n}</span>`:"");
@@ -3554,7 +3727,7 @@ function buildDoc(){
   }).join("");
 
   const items = esquema().map(e=>({e, d:state.dosis[e.id],
-                                   st:estadoDosis(fn,e.m,state.dosis[e.id],hoy)}));
+                                   st:estadoDosis(e,state.dosis[e.id],hoy)}));
   const aplicadas = items.filter(i=>i.st.k==="ok");
   const pendientes = items.filter(i=>i.st.k!=="ok").slice(0,6);
 
@@ -3568,7 +3741,7 @@ function buildDoc(){
 
   const listaProximas = pendientes.length
     ? `<div class="doc-next">${pendientes.map(i=>{
-        const objetivo = fn?fmtFecha(toISO(sumarMeses(fn,i.e.m))):"—";
+        const objetivo = i.e.objetivo?fmtFecha(i.e.objetivo):"—";
         const late = i.st.k==="late";
         return `<div class="it"><b>${esc(i.e.etiqueta)}</b>
           <span class="${late?"late":""}">${late?"pendiente desde ":""}${objetivo}</span></div>`;
@@ -3751,6 +3924,7 @@ document.addEventListener("click", e=>{
     document.querySelectorAll('[data-action="chart"]').forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.ind===state.chartInd)));
     renderChart(); }
   else if(a==="salir"){
+    if(pararEscucha){ pararEscucha(); pararEscucha=null; }
     Nube.salir();
     state.sesion=null;
     Store.saveMeta({sesion:null});
@@ -3799,6 +3973,7 @@ document.addEventListener("click", e=>{
   else if(a==="reintentar-nube") reintentarNube();
   else if(a==="subir-todo") subirPendientes(false);
   else if(a==="probar-escritura") probarEscritura();
+  else if(a==="refrescar-padres") refrescarPadres();
   else if(a==="recargar-datos"){ document.getElementById("d-alerts").innerHTML=""; arrancarDatos(); }
   else if(a==="verificar-nube") verificarNube();
   else if(a==="acceso-nuevo") abrirAcceso();
@@ -3823,6 +3998,8 @@ document.addEventListener("click", e=>{
   else if(a==="pac-abrir") abrirExpediente(b.dataset.id);
   else if(a==="pac-nuevo") nuevoPaciente();
   else if(a==="dosis-abrir") abrirDosis(b.dataset.key);
+  else if(a==="omitir") omitir(b.dataset.id);
+  else if(a==="dosis-extra") nuevaDosisExtra();
   else if(a==="dosis-cerrar") cerrarDosis();
   else if(a==="dosis-borrar") quitarDosis();
   else if(a==="doc-open"){
@@ -3920,6 +4097,46 @@ async function probarEscritura(){
       : `<br>El bloque que falla es el de la primera línea con ✕. Esa es la parte de las reglas que hay que revisar.`));
 }
 
+/* El encargado no tiene por qué entender de sincronización: un botón que
+   vuelve a preguntar, y la hora del último dato recibido. Se dispara solo
+   al volver a la aplicación, que es cuando la mamá espera ver lo nuevo. */
+let pararEscucha = null;
+
+function escucharExpediente(id){
+  if(pararEscucha){ pararEscucha(); pararEscucha=null; }
+  if(!Nube.activa() || !id || puedeEditar()) return;
+  pararEscucha = Nube.escuchar(id, (que, datos)=>{
+    if(que==="paciente"){
+      state.paciente = Object.assign(blankPaciente(), documentoAPaciente(datos));
+      state.hitos = datos.hitos || {};
+      state.omisiones = datos.omisiones || {};
+      state.accesos = datos.accesosDetalle || [];
+    }
+    else if(que==="mediciones") state.mediciones = datos.map(documentoAMedicion);
+    else if(que==="dosis") state.dosis = migrarDosis(datos);
+
+    state.actualizadoEn = new Date().toLocaleString("es-GT",
+      {day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
+    Store.saveAll(state);
+    renderStrip(); renderPadres();
+  });
+}
+
+async function refrescarPadres(){
+  if(!Nube.activa()){
+    aviso("d-alerts","warn","Sin conexión. Intente cuando tenga internet.");
+    return;
+  }
+  const btn=document.querySelector('[data-action="refrescar-padres"]');
+  if(btn){ btn.disabled=true; btn.textContent="Buscando…"; }
+  try{
+    const mios = await Nube.misPacientes();
+    if(mios.length) await abrirExpediente(mios[0].id);
+  }catch(err){ console.error("refrescarPadres", err); }
+  if(btn){ btn.disabled=false; btn.textContent="Buscar información nueva"; }
+  renderPadres();
+}
+
 async function verificarNube(){
   if(!Nube.activa()||!state.pacienteId){
     aviso("d-alerts","warn","Todavía no hay expediente en la nube que verificar.");
@@ -3928,7 +4145,23 @@ async function verificarNube(){
   try{
     marcarSync("Verificando…","pend");
     state.conteoNube = await Nube.contar(state.pacienteId);
+    const crudo = await Nube.leerCrudo(state.pacienteId);
     marcarSync("");
+
+    /* Los accesos son la causa más silenciosa de que un padre «no vea
+       nada»: la cuenta existe, entra sin error, pero su UID nunca quedó
+       en el expediente y las reglas lo dejan fuera sin explicación. */
+    const enNube = crudo?.autorizadosUid || [];
+    const sueltos = state.accesos.filter(ac=>!enNube.includes(ac.uid));
+    if(state.accesos.length && sueltos.length){
+      aviso("d-alerts","block",
+        `<b>Los accesos no están vinculados en la nube.</b><br>` +
+        sueltos.map(ac=>`✕ ${esc(ac.ident)} — creado pero sin permiso de lectura`).join("<br>") +
+        `<br>Por eso el responsable entra pero no ve nada. Pulse
+         <em>Subir todo de nuevo</em> y vuelva a verificar.`);
+      renderDiagnostico();
+      return;
+    }
     const igual = state.conteoNube.mediciones===state.mediciones.length &&
                   state.conteoNube.dosis===Object.keys(state.dosis).length;
     aviso("d-alerts", igual?"ok":"warn", igual
@@ -3999,7 +4232,10 @@ function renderDiagnostico(){
              `${state.conteoNube.mediciones} mediciones · ${state.conteoNube.dosis} vacunas`,
              state.conteoNube.mediciones===state.mediciones.length &&
              state.conteoNube.dosis===Object.keys(state.dosis).length)
-      : fila("Verificado en la nube", "sin comprobar"));
+      : fila("Verificado en la nube", "sin comprobar")) +
+    fila("Accesos del responsable",
+         state.accesos.length ? state.accesos.map(a=>esc(a.ident)).join(", ") : "ninguno creado",
+         state.accesos.length>0);
 }
 
 /* ============================================================
@@ -4112,6 +4348,47 @@ async function guardarAcceso(){
    ============================================================ */
 let dosisEditando = null;   // {m, v, key}
 
+/* Marcar «no aplica» no borra nada: deja constancia de que alguien
+   decidió que esa dosis no corresponde a este niño, con el motivo y la
+   firma. Un renglón simplemente ausente no diría quién lo decidió. */
+function omitir(id){
+  if(!puedeEditar()) return;
+  if(state.omisiones[id]){
+    delete state.omisiones[id];
+  }else{
+    const e = esquema().find(x=>x.id===id);
+    const motivo = prompt(
+      `¿Por qué no aplica ${e?e.etiqueta:"esta dosis"}?\n\n` +
+      `Ejemplos: se decidió una sola dosis por la edad; los padres no la autorizan; ` +
+      `contraindicada; ya la recibió en otro servicio.`, "");
+    if(motivo===null) return;
+    state.omisiones[id] = {motivo: motivo.trim() || "sin motivo anotado",
+                           por: state.sesion?.email || "", fecha: hoyISO()};
+  }
+  Store.saveMeta({omisiones:state.omisiones});
+  state.pendPaciente=true; guardarPendientes();
+  subirPendientes(true).then(()=>{ renderPendientes(); });
+  renderVacunas(); renderVacQuick(); renderTabBadge();
+}
+
+/* Vacuna fuera del esquema: fiebre amarilla antes de un viaje, rabia tras
+   una mordedura, una dosis puesta en otro país. El nombre es libre porque
+   no se puede prever el catálogo entero. */
+function nuevaDosisExtra(){
+  if(!puedeEditar()) return;
+  if(!hayExpediente()){ aviso("d-alerts","block","Abra un expediente primero."); return; }
+  const bio = prompt("¿Qué vacuna se aplicó?\n\nEscriba el biológico, por ejemplo: Fiebre amarilla, Rabia, Dengue, Tifoidea.", "");
+  if(bio===null) return;
+  if(!bio.trim()){ return; }
+  const detalle = prompt("¿Qué dosis es? (opcional)\n\nPor ejemplo: dosis única, 1ª de 3, refuerzo de viaje.", "dosis única") || "";
+  const id = "extra-" + Date.now().toString(36);
+  state.dosis[id] = {clase:"extra", biologico:bio.trim(), etiquetaLibre:detalle.trim() || "fuera del esquema",
+                     fecha:"", responsable:"", registradoPor:state.sesion?.email||""};
+  Store.saveDosis(state.dosis);
+  renderVacunas();
+  abrirDosis(id);
+}
+
 function abrirDosis(id){
   if(!puedeEditar()) return;
   const e = esquema().find(x=>x.id===id);
@@ -4124,7 +4401,10 @@ function abrirDosis(id){
   document.getElementById("dm-titulo").textContent = e.bio;
   document.getElementById("dm-sub").innerHTML =
     `<b>${etiquetaDosis(e)}</b>${e.protege?` · previene ${e.protege}`:""}
-     <br>${etiquetaEdad(e.m)} del esquema${fn?` · objetivo ${fmtFecha(toISO(sumarMeses(fn,e.m)))}`:""}
+     <br>${e.clase==="extra" ? "Fuera del esquema"
+          : e.temporada ? `Temporada ${e.temporada}`
+          : etiquetaEdad(e.m)+" del esquema"}${
+       e.objetivo&&e.clase!=="extra" ? ` · objetivo ${fmtFecha(e.objetivo)}` : ""}
      · ${esc(state.paciente.nombre)}
      ${e.nota?`<br><span style="color:var(--warn)">${e.nota}</span>`:""}`;
   document.getElementById("dm-marcas").innerHTML =
@@ -4190,7 +4470,8 @@ function guardarDosis(){
 
   state.dosis[key] = {
     biologico:e.bio, clase:e.clase, numeroDosis:e.n??null, temporada:e.temporada??null,
-    etiqueta:e.etiqueta, edadObjetivoMeses:e.m,
+    etiquetaLibre:e.etiquetaLibre??null,
+    etiqueta:e.etiqueta, edadObjetivoMeses:Math.round(e.m), fechaObjetivo:e.objetivo||"",
     nombreComercial:document.getElementById("dm-marca").value.trim(),
     composicion:document.getElementById("dm-comp").value.trim(),
     lote:document.getElementById("dm-lote").value.trim(),
@@ -4459,6 +4740,7 @@ async function abrirExpediente(id){
     state.pacienteId = id;
     state.paciente = Object.assign(blankPaciente(), documentoAPaciente(e.paciente));
     state.hitos = e.paciente.hitos || {};
+    state.omisiones = e.paciente.omisiones || {};
     state.accesos = e.paciente.accesosDetalle || [];
     state.pendPaciente=false; state.pendMediciones.clear(); state.pendDosis.clear();
     state.conteoNube=null;
@@ -4468,6 +4750,9 @@ async function abrirExpediente(id){
     state.borrador = {fecha:hoyISO(), peso:"", talla:"", pc:"", muac:"", posicion:"auto", edema:false, nota:""};
     state.overrides.clear();
     state.tab = "captura";
+    escucharExpediente(id);
+    state.actualizadoEn = new Date().toLocaleString("es-GT",
+      {day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
     Store.saveAll(state);
     render();
     marcarSync("");
@@ -4555,6 +4840,7 @@ function nuevoPaciente(){
   state.mediciones=[];
   state.dosis={};
   state.hitos={};
+  state.omisiones={};
   state.accesos=[];
   state.pendPaciente=false; state.pendMediciones.clear(); state.pendDosis.clear();
   state.conteoNube=null; guardarPendientes();
@@ -4635,7 +4921,7 @@ const Store = (()=>{
     saveMeta: m=>parche(m),
     saveAll: s=>escribir(Object.assign({}, leer()||{},
       {sede:s.sede,paciente:s.paciente,mediciones:s.mediciones,dosis:s.dosis,
-       hitos:s.hitos,accesos:s.accesos,pacienteId:s.pacienteId})),
+       hitos:s.hitos,omisiones:s.omisiones,accesos:s.accesos,pacienteId:s.pacienteId})),
     clearAll: ()=>{ mem=null; if(disponible) try{ localStorage.removeItem(K); }catch(e){} }
   };
 })();
@@ -4703,11 +4989,47 @@ function mostrarInstalar(){
 /* Trabajador de servicio: hace que funcione sin señal. Solo corre sobre
    https (GitHub Pages lo es); al abrir el archivo con doble clic desde el
    escritorio no se registra, y la herramienta funciona igual. */
+/* Registrar no basta. Una aplicación instalada sigue controlada por el
+   trabajador viejo hasta que el navegador decide revisar, y eso puede
+   tardar. Aquí se fuerza la revisión al abrir y cada media hora, y cuando
+   hay una versión nueva se avisa con un botón en vez de dejar que el
+   usuario acabe desinstalando y borrando caché a mano. */
 function registrarSW(){
   if(!("serviceWorker" in navigator)) return;
   if(location.protocol!=="https:" && location.hostname!=="localhost") return;
-  navigator.serviceWorker.register("sw.js").catch(err=>
-    console.info("Sin trabajador de servicio:", err.message));
+
+  navigator.serviceWorker.register("sw.js").then(reg=>{
+    reg.update().catch(()=>{});
+    setInterval(()=>reg.update().catch(()=>{}), 1800000);
+
+    reg.addEventListener("updatefound", ()=>{
+      const nuevo = reg.installing;
+      if(!nuevo) return;
+      nuevo.addEventListener("statechange", ()=>{
+        // 'installed' con un controlador ya activo = hay versión nueva esperando
+        if(nuevo.state==="installed" && navigator.serviceWorker.controller){
+          mostrarActualizacion(nuevo);
+        }
+      });
+    });
+  }).catch(err=> console.info("Sin trabajador de servicio:", err.message));
+
+  let recargando=false;
+  navigator.serviceWorker.addEventListener("controllerchange", ()=>{
+    if(recargando) return;
+    recargando=true;
+    location.reload();
+  });
+}
+
+function mostrarActualizacion(nuevo){
+  const el=document.getElementById("actualizacion");
+  if(!el) return;
+  el.hidden=false;
+  el.querySelector("button").onclick = ()=>{
+    el.hidden=true;
+    nuevo.postMessage({tipo:"activar-ya"});
+  };
 }
 
 /* ============================================================
@@ -4727,6 +5049,7 @@ function registrarSW(){
     if(Array.isArray(saved.mediciones)) state.mediciones=saved.mediciones;
     if(saved.dosis) state.dosis=migrarDosis(saved.dosis);
     if(saved.hitos) state.hitos=saved.hitos;
+    if(saved.omisiones) state.omisiones=saved.omisiones;
     if(saved.accesos) state.accesos=saved.accesos;
     if(saved.pend){
       state.pendPaciente = !!saved.pend.p;
@@ -4744,6 +5067,14 @@ function registrarSW(){
   /* Al recuperar la señal se sube lo pendiente sin que nadie lo pida.
      Es lo que evita que un dato capturado en un pasillo sin cobertura se
      quede para siempre en ese teléfono. */
+  /* Al volver a la aplicación desde el fondo, el encargado espera ver lo
+     que su médico anotó hoy. Sin esto tendría que cerrar sesión y entrar
+     de nuevo para enterarse. */
+  document.addEventListener("visibilitychange", ()=>{
+    if(document.visibilityState!=="visible") return;
+    if(state.sesion && !puedeEditar() && Nube.activa()) refrescarPadres();
+  });
+
   window.addEventListener("online", ()=>subirPendientes("auto").then(renderPendientes));
   setInterval(()=>{ if(pendientes().total) subirPendientes("auto").then(renderPendientes); }, 60000);
 })();
