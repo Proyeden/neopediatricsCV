@@ -1184,8 +1184,10 @@ body.lectura .solo-clinico{display:none !important}
           <header><h2>Responsables con acceso</h2></header>
           <div class="body">
             <div id="accesos-lista"></div>
-            <button type="button" class="btn btn-ghost btn-sm solo-clinico"
-              data-action="acceso-nuevo" style="margin-bottom:var(--s3)">Crear acceso</button>
+            <div class="btn-row solo-clinico" style="margin-bottom:var(--s3)">
+              <button type="button" class="btn btn-ghost btn-sm" data-action="acceso-nuevo">Crear acceso</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-action="acceso-existente">Vincular cuenta que ya existe</button>
+            </div>
             <div class="field">
               <label for="p-tel">WhatsApp para recordatorios</label>
               <input type="tel" id="p-tel" data-pat="tel" placeholder="5xxx xxxx" inputmode="tel">
@@ -1815,6 +1817,7 @@ const state = {
   lista:[],          // resultados de búsqueda de pacientes
   buscando:false,
   conteoNube:null,
+  indicesNube:null,
   sinVinculo:null,
   actualizadoEn:"",
   autorizadosNube:null,   // lo que Firestore tiene realmente en autorizadosUid
@@ -2434,7 +2437,7 @@ const Nube = {
     }catch(err){
       if(sec){ try{ const {deleteApp}=await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js"); await deleteApp(sec); }catch(e){} }
       const msg = {
-        "auth/email-already-in-use":"Ese correo o usuario ya tiene una cuenta. Si es de otro hijo del mismo responsable, búsquelo en su expediente y use el mismo acceso.",
+        "auth/email-already-in-use":"Esa cuenta ya existe. No hay que crearla otra vez: cierre esta ventana y use <b>Vincular cuenta que ya existe</b>, pidiéndole a la persona el identificador que aparece en su pantalla.",
         "auth/weak-password":"La contraseña debe tener al menos 6 caracteres.",
         "auth/invalid-email":"El correo no tiene un formato válido.",
         "auth/operation-not-allowed":"Falta habilitar «Correo electrónico/contraseña» en la consola de Firebase."
@@ -3634,9 +3637,11 @@ function renderPadres(){
         ${s.uid?`<div class="sin-vinculo">
           <div>Está dentro como <b>${esc(s.ident)}</b></div>
           <div class="uid">Identificador de esta cuenta: <code>${esc(s.uid)}</code></div>
-          <p class="hint">Muéstrele estos dos datos a su médico: con ellos sabe en un vistazo
-            si el problema es que falta asociarla, o si este teléfono quedó con una cuenta de
-            prueba anterior.</p>
+          <p class="hint">Muéstrele este identificador a su médico. En la clínica, en
+            <em>Datos del paciente</em>, hay un botón <b>Vincular cuenta que ya existe</b> donde
+            se pega y queda asociada al instante.</p>
+          <button type="button" class="btn btn-ghost btn-sm" data-action="copiar-uid"
+            style="margin-top:var(--s2)">Copiar el identificador</button>
         </div>`:""}
         <div class="btn-row" style="margin-top:var(--s3)">
           <button type="button" class="btn btn-ghost btn-sm" data-action="refrescar-padres">Volver a buscar</button>
@@ -4094,12 +4099,23 @@ document.addEventListener("click", e=>{
   else if(a==="reintentar-nube") reintentarNube();
   else if(a==="subir-todo") subirPendientes(false);
   else if(a==="probar-escritura") probarEscritura();
+  else if(a==="copiar-uid"){
+    const t=state.sinVinculo?.uid||"";
+    if(navigator.clipboard?.writeText){
+      navigator.clipboard.writeText(t).then(
+        ()=>{ b.textContent="Copiado ✓"; setTimeout(()=>b.textContent="Copiar el identificador",2500); },
+        ()=>prompt("Copie este identificador y envíelo a la clínica:", t));
+    }else{
+      prompt("Copie este identificador y envíelo a la clínica:", t);
+    }
+  }
   else if(a==="refrescar-padres") refrescarPadres();
   else if(a==="recargar-datos"){ document.getElementById("d-alerts").innerHTML=""; arrancarDatos(); }
   else if(a==="verificar-nube") verificarNube();
   else if(a==="revisar-accesos") revisarAccesos();
   else if(a==="vincular-accesos") vincularAccesos();
   else if(a==="acceso-nuevo") abrirAcceso();
+  else if(a==="acceso-existente") vincularCuentaExistente();
   else if(a==="acceso-cerrar") document.getElementById("acceso-modal").hidden=true;
   else if(a==="am-tipo"){ tipoAcceso=b.dataset.t; renderTipoAcceso(); }
   else if(a==="am-generar") document.getElementById("am-pass").value=claveSugerida();
@@ -4432,11 +4448,20 @@ function renderAccesos(){
      porque desde la clínica todo se ve bien. Aquí se muestra el estado
      real de cada acceso, no el que uno supone. */
   const nube = state.autorizadosNube;
+  const idx  = state.indicesNube;   // {uid: pacienteId} según Firestore
+
+  /* El vínculo son dos piezas independientes y hay que mostrarlas por
+     separado. Una sola etiqueta «Vinculado» que solo miraba el permiso
+     hacía creer que todo estaba bien mientras el responsable no podía
+     entrar: exactamente el fallo que costó más tiempo de encontrar. */
   host.innerHTML = state.accesos.map((a,i)=>{
-    const vinculado = nube ? nube.includes(a.uid) : null;
-    const etq = vinculado===null ? ""
-      : vinculado ? `<span class="pill pill-ok">Vinculado</span>`
-                  : `<span class="pill pill-late">Sin vincular</span>`;
+    const permiso = nube ? nube.includes(a.uid) : null;
+    const atajo   = idx  ? idx[a.uid]===state.pacienteId : null;
+    const marca = (ok,si,no) => ok===null ? ""
+      : ok ? `<span class="pill pill-ok">${si}</span>`
+           : `<span class="pill pill-late">${no}</span>`;
+    const etq = marca(permiso,"Permiso ✓","Sin permiso") + " " +
+                marca(atajo,"Atajo ✓","Falta el atajo");
     return `<div class="acceso">
       <span class="ic">${esc(a.ident[0]||"?").toUpperCase()}</span>
       <span style="flex:1">
@@ -4488,6 +4513,14 @@ async function repararAtajos(){
   renderPendientes();
   await subirPendientes("auto");
   renderPendientes();
+  /* Si quedó reparado, decirlo: el clínico necesita saber que el
+     responsable ya puede entrar, sin tener que revisar nada. */
+  if(!state.pendIndices.size){
+    state.indicesNube = null;
+    aviso("d-alerts","ok",`Se restableció el atajo de entrada de
+      ${faltan} acceso${faltan===1?"":"s"}. El responsable ya puede ver el expediente.`);
+    renderAccesos();
+  }
 }
 
 async function revisarAccesos(){
@@ -4505,13 +4538,16 @@ async function revisarAccesos(){
        /accesos/{uid}. Puede faltar solo la segunda, y entonces todo se ve
        bien desde la clínica mientras el responsable no encuentra nada. */
     const sinIndice=[];
+    state.indicesNube = {};
     for(const ac of state.accesos){
       if(!ac.uid) continue;
       try{
         const idx = await Nube.leerIndice(ac.uid);
+        state.indicesNube[ac.uid] = idx?.pacienteId || null;
         if(idx?.pacienteId !== state.pacienteId) sinIndice.push(ac.ident);
-      }catch(e){ sinIndice.push(ac.ident); }
+      }catch(e){ state.indicesNube[ac.uid]=null; sinIndice.push(ac.ident); }
     }
+    renderAccesos();
 
     aviso("d-alerts", (faltan.length||sinIndice.length)?"warn":"ok", faltan.length
       ? `${faltan.length} acceso${faltan.length===1?"":"s"} sin vincular. Pulse <b>Vincular ahora</b>.`
@@ -4536,6 +4572,45 @@ async function vincularAccesos(){
   marcarSync("Vinculando…","pend");
   await subirPendientes(false);
   await revisarAccesos();
+}
+
+/* Una cuenta puede existir sin que la clínica la conozca: creada en la
+   consola de Firebase, o creada aquí para otro hijo del mismo
+   responsable. En esos casos no hay forma de averiguar su identificador
+   desde el navegador —el SDK no permite buscar cuentas por correo, y con
+   razón—, así que se le pide a la persona.
+
+   Para eso su propia pantalla se lo muestra: cuando entra y no encuentra
+   expediente, lee «Identificador de esta cuenta: rleBDT…». Ese texto es
+   el que se pega aquí. */
+function vincularCuentaExistente(){
+  if(!puedeEditar()) return;
+  if(!hayExpediente()){ aviso("d-alerts","block","Abra un expediente primero."); return; }
+
+  const uid = prompt(
+    "Pegue el identificador de la cuenta.\n\n" +
+    "El responsable lo ve en su propia pantalla, debajo de «Identificador de esta cuenta».\n" +
+    "Son unos 28 caracteres, por ejemplo: rleBDTZtRGhMnxBmoYrBsDrRths1", "");
+  if(uid===null) return;
+  const limpio = uid.trim();
+  if(limpio.length < 20 || /\s/.test(limpio)){
+    aviso("d-alerts","block","Eso no parece un identificador de cuenta. Son unos 28 caracteres seguidos, sin espacios.");
+    return;
+  }
+  if(state.accesos.some(a=>a.uid===limpio)){
+    aviso("d-alerts","warn","Esa cuenta ya está en la lista de accesos.");
+    return;
+  }
+  const ident = (prompt("¿Cómo la identificamos en la lista?\n\nEl correo o el usuario de esa persona.", "") || limpio).trim();
+
+  state.accesos.push({uid:limpio, ident, tipo: ident.includes("@")?"correo":"usuario",
+                      creadoEn:new Date().toISOString(), vinculada:true});
+  Store.saveMeta({accesos:state.accesos});
+  state.pendIndices.add(limpio);
+  state.pendPaciente = true;
+  guardarPendientes();
+  renderAccesos(); renderPendientes();
+  subirPendientes(false).then(()=>{ renderAccesos(); revisarAccesos(); });
 }
 
 function abrirAcceso(){
@@ -4800,7 +4875,7 @@ function explicarError(err){
     if(yo && !yo.emailVerified && esClinico(yo.email))
       return {tipo:"verificar", txt:`Firestore rechazó la escritura porque <b>su correo todavía no
         está verificado</b>. Las reglas exigen verificación para el personal clínico.`};
-    return {tipo:"reglas", txt:`Firestore rechazó la escritura: <b>permiso denegado</b>.
+    return {tipo:"reglas", txt:`Firestore rechazó la operación: <b>permiso denegado</b>.
       La cuenta es <b>${esc(Nube.auth?.currentUser?.email||"—")}</b>
       (verificada: ${Nube.auth?.currentUser?.emailVerified?"sí":"no"}).
       Causas posibles, en orden: las reglas no están publicadas todavía; el correo de las reglas
@@ -5085,7 +5160,7 @@ async function abrirExpediente(id){
     state.accesos = e.paciente.accesosDetalle || [];
     state.pendPaciente=false; state.pendMediciones.clear(); state.pendDosis.clear();
     state.pendIndices.clear();
-    state.conteoNube=null; state.autorizadosNube=null;
+    state.conteoNube=null; state.autorizadosNube=null; state.indicesNube=null;
     guardarPendientes();
     state.mediciones = e.mediciones.map(documentoAMedicion);
     state.dosis = migrarDosis(e.dosis);
