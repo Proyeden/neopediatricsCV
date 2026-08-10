@@ -3,7 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Captura en consulta · Carné pediátrico</title>
+<title>Carné de salud infantil · Neo Pediatrics</title>
+
+<!-- Instalable en la pantalla de inicio. El manifiesto y los íconos van
+     como archivos aparte porque iOS y Android no los aceptan incrustados;
+     deben subirse junto a este archivo, en la misma carpeta. -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#123F73">
+<meta name="description" content="Crecimiento, vacunas y desarrollo de su hijo, siempre a la mano.">
+
+<!-- iOS ignora el manifiesto: necesita sus propias etiquetas. -->
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Carné">
+<meta name="mobile-web-app-capable" content="yes">
+
+<link rel="icon" type="image/png" sizes="64x64" href="data:image/png;base64,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">
 <style>
 /* ============================================================
    TOKENS — cambiar la paleta se hace solo aquí
@@ -649,6 +665,11 @@ code{font:var(--f-12)/1.4 var(--mono);background:var(--surface-2);padding:1px 5p
   text-decoration:none;font-size:var(--f-13)}
 .login-olvide:hover{color:var(--brand);text-decoration:underline}
 
+.instalar{margin-top:var(--s3);text-align:center}
+.instalar[hidden]{display:none !important}
+.instalar .btn{width:100%}
+.instalar .hint{text-align:center}
+
 .login-foot{
   margin:var(--s5) 0 0;font-size:var(--f-12);color:var(--muted);line-height:1.6;text-align:center;
   border-top:1px solid var(--line);padding-top:var(--s4);
@@ -843,6 +864,13 @@ body.lectura .solo-clinico{display:none !important}
     <p class="login-foot">
       ¿No tiene correo? Escriba el usuario que le dieron en la clínica.
     </p>
+
+    <div class="instalar" id="instalar" hidden>
+      <button type="button" class="btn btn-ghost btn-sm" data-action="instalar">
+        Instalar en la pantalla de inicio
+      </button>
+      <p class="hint">Para abrirlo como una aplicación, sin buscar el enlace cada vez.</p>
+    </div>
   </form>
 </div>
 
@@ -3728,6 +3756,7 @@ document.addEventListener("click", e=>{
     document.getElementById("cm-actual").focus();
   }
   else if(a==="clave-cerrar") document.getElementById("clave-modal").hidden=true;
+  else if(a==="instalar") instalar();
   else if(a==="cerrar-problema") document.getElementById("problema").hidden=true;
   else if(a==="verificar-correo") Nube.verificarCorreo();
   else if(a==="refrescar-token") refrescarSesion();
@@ -4414,6 +4443,76 @@ const Store = (()=>{
 })();
 
 /* ============================================================
+   INSTALACIÓN EN LA PANTALLA DE INICIO
+   Android dispara beforeinstallprompt y se puede ofrecer un botón.
+   iOS no lo dispara nunca: allí hay que explicar el gesto, porque el
+   usuario no lo adivina.
+   ============================================================ */
+let promesaInstalar = null;
+
+window.addEventListener("beforeinstallprompt", e=>{
+  e.preventDefault();
+  promesaInstalar = e;
+  const c=document.getElementById("instalar");
+  if(c) c.hidden = false;
+});
+
+window.addEventListener("appinstalled", ()=>{
+  promesaInstalar = null;
+  const c=document.getElementById("instalar");
+  if(c) c.hidden = true;
+});
+
+function esIOS(){
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+         (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
+}
+function yaInstalada(){
+  try{
+    return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)
+           || navigator.standalone===true;
+  }catch(e){ return false; }
+}
+
+async function instalar(){
+  if(promesaInstalar){
+    promesaInstalar.prompt();
+    try{ await promesaInstalar.userChoice; }catch(e){}
+    promesaInstalar = null;
+    document.getElementById("instalar").hidden = true;
+    return;
+  }
+  if(esIOS()){
+    alert("Para instalarlo en su iPhone:\n\n" +
+          "1. Toque el botón Compartir, el cuadrito con la flecha hacia arriba.\n" +
+          "2. Deslice y elija «Agregar a inicio».\n" +
+          "3. Toque «Agregar».\n\n" +
+          "Quedará con el logo de Neo Pediatrics junto a sus demás aplicaciones.");
+    return;
+  }
+  alert("En el menú de su navegador busque «Instalar aplicación» o «Agregar a la pantalla de inicio».");
+}
+
+/* En iOS el botón no aparece solo, porque el navegador nunca avisa que se
+   puede instalar. Se muestra igual, con la explicación del gesto. */
+function mostrarInstalar(){
+  const c=document.getElementById("instalar");
+  if(!c) return;
+  if(yaInstalada()){ c.hidden = true; return; }
+  if(esIOS()) c.hidden = false;
+}
+
+/* Trabajador de servicio: hace que funcione sin señal. Solo corre sobre
+   https (GitHub Pages lo es); al abrir el archivo con doble clic desde el
+   escritorio no se registra, y la herramienta funciona igual. */
+function registrarSW(){
+  if(!("serviceWorker" in navigator)) return;
+  if(location.protocol!=="https:" && location.hostname!=="localhost") return;
+  navigator.serviceWorker.register("sw.js").catch(err=>
+    console.info("Sin trabajador de servicio:", err.message));
+}
+
+/* ============================================================
    ARRANQUE
    ============================================================ */
 (function init(){
@@ -4435,6 +4534,8 @@ const Store = (()=>{
   }
   if(!state.paciente.nombre && puedeEditar()) state.tab="paciente";
   render();
+  mostrarInstalar();
+  registrarSW();
   Nube.iniciar();
 })();
 </script>
