@@ -174,6 +174,31 @@ button{font:inherit}
     letter-spacing:.06em;color:var(--muted);font-weight:700;margin-top:var(--s2);
   }
   #tbl-vac tbody tr:not(.grp) td:first-child::before{display:none}
+
+  /* El historial tiene catorce columnas: en un teléfono son metro y medio
+     de desplazamiento lateral, y los botones de Editar y Borrar quedan al
+     final, fuera de la vista. Cada medición pasa a ser una tarjeta. */
+  #tbl-med thead{display:none}
+  #tbl-med tbody tr{
+    display:block;border:1px solid var(--line);border-radius:var(--r);
+    padding:var(--s3);margin-bottom:var(--s2);background:var(--surface);
+  }
+  #tbl-med tbody tr td{display:inline-block;border:none;padding:2px 0;width:auto;vertical-align:top}
+  #tbl-med tbody tr td::before{
+    content:attr(data-l) " ";font-size:10px;text-transform:uppercase;
+    letter-spacing:.05em;color:var(--muted);font-weight:700;margin-right:3px;
+  }
+  #tbl-med tbody tr td[data-l]{margin-right:var(--s3)}
+  #tbl-med tbody tr td:first-child{
+    display:block;font-family:var(--round);font-weight:700;color:var(--np-navy);
+    font-size:var(--f-15);margin-bottom:2px;
+  }
+  #tbl-med tbody tr td:first-child::before{display:none}
+  #tbl-med tbody tr td:nth-child(2){display:block;color:var(--muted);margin-bottom:var(--s2)}
+  #tbl-med tbody tr td:nth-child(2)::before{display:none}
+  #tbl-med td.act{display:block;width:auto;margin-top:var(--s2);
+    border-top:1px solid var(--line);padding-top:var(--s2)}
+  #tbl-med td.act .link{font-size:var(--f-15)}
   #tbl-vac .vac-nom{padding-left:0;min-width:0}
   #tbl-vac .protege{max-width:none}
   #tbl-vac input[type=text]{width:100%}
@@ -294,6 +319,11 @@ button{font:inherit}
   display:inline-block;font-size:10px;font-weight:700;color:var(--brand);
   background:var(--brand-soft);border-radius:99px;padding:1px 7px;margin-top:2px;
 }
+
+.card.editando{border-color:var(--brand);border-left:5px solid var(--brand)}
+.card.editando > header{background:var(--brand-soft)}
+.card.editando > header h2{color:var(--np-navy);text-transform:none;letter-spacing:0;font-size:var(--f-15)}
+#tbl-med td.act .link + .link{margin-left:var(--s2)}
 
 .check-edema{
   display:flex;gap:var(--s2);align-items:flex-start;padding:var(--s3);
@@ -978,8 +1008,8 @@ body.lectura .solo-clinico{display:none !important}
 
   <section id="tab-captura" class="grid">
     <div>
-      <div class="card no-print solo-clinico">
-        <header><h2>Nueva medición</h2></header>
+      <div class="card no-print solo-clinico" id="card-medicion">
+        <header><h2 id="med-titulo">Nueva medición</h2></header>
         <div class="body">
           <div class="field">
             <label for="m-fecha-txt">Fecha de la consulta</label>
@@ -990,27 +1020,28 @@ body.lectura .solo-clinico{display:none !important}
             </div>
             <p class="hint derived" id="m-edad">—</p>
           </div>
-          <div class="row row-3">
-            <div class="field">
-              <div class="lbl-row">
-                <label for="m-peso">Peso</label>
-                <span class="unit-switch" role="group" aria-label="Unidad de peso">
-                  <button type="button" data-action="unidad" data-u="kg" aria-pressed="true">kg</button>
-                  <button type="button" data-action="unidad" data-u="lb" aria-pressed="false">lb</button>
-                </span>
-              </div>
-              <div class="peso-campo">
-                <span class="cajita">
-                  <input type="number" id="m-peso" data-input="peso" step="0.01" inputmode="decimal" placeholder="0">
-                  <i id="m-peso-u">kg</i>
-                </span>
-                <span class="cajita" id="m-oz-caja" hidden>
-                  <input type="number" id="m-peso-oz" data-input="pesoOz" step="1" min="0" max="15"
-                         inputmode="numeric" placeholder="0">
-                  <i>oz</i>
-                </span>
-              </div>
+          <div class="field">
+            <div class="lbl-row">
+              <label for="m-peso">Peso</label>
+              <span class="unit-switch" role="group" aria-label="Unidad de peso">
+                <button type="button" data-action="unidad" data-u="kg" aria-pressed="true">kg</button>
+                <button type="button" data-action="unidad" data-u="lb" aria-pressed="false">lb + oz</button>
+              </span>
             </div>
+            <div class="peso-campo">
+              <span class="cajita">
+                <input type="number" id="m-peso" data-input="peso" step="0.01" inputmode="decimal" placeholder="0">
+                <i id="m-peso-u">kg</i>
+              </span>
+              <span class="cajita" id="m-oz-caja" hidden>
+                <input type="number" id="m-peso-oz" data-input="pesoOz" step="1" min="0" max="15"
+                       inputmode="numeric" placeholder="0">
+                <i>oz</i>
+              </span>
+            </div>
+          </div>
+
+          <div class="row row-2">
             <div class="field">
               <label for="m-talla">Talla (cm)</label>
               <input type="number" id="m-talla" data-input="talla" step="0.1" min="30" max="140" inputmode="decimal" placeholder="0.0">
@@ -1020,6 +1051,7 @@ body.lectura .solo-clinico{display:none !important}
               <input type="number" id="m-pc" data-input="pc" step="0.1" min="25" max="60" inputmode="decimal" placeholder="0.0">
             </div>
           </div>
+
           <p class="hint" id="m-lbs">Las libras se calculan solas — no se escriben.</p>
 
           <div class="row row-2">
@@ -1054,8 +1086,8 @@ body.lectura .solo-clinico{display:none !important}
           <div class="alerts" id="m-alerts"></div>
 
           <div class="btn-row" style="margin-top:var(--s4)">
-            <button type="button" class="btn btn-primary" data-action="guardar-medicion">Guardar medición</button>
-            <button type="button" class="btn btn-ghost btn-sm" data-action="limpiar-medicion">Limpiar</button>
+            <button type="button" class="btn btn-primary" data-action="guardar-medicion" id="med-guardar">Guardar medición</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-action="limpiar-medicion" id="med-limpiar">Limpiar</button>
           </div>
         </div>
       </div>
@@ -1221,8 +1253,8 @@ body.lectura .solo-clinico{display:none !important}
         <div class="card">
           <header><h2>Mediciones al nacimiento</h2></header>
           <div class="body">
-            <div class="row row-3">
-              <div class="field">
+            <div class="field">
+              <div>
                 <div class="lbl-row">
                   <label for="p-npeso">Peso al nacer</label>
                   <span class="unit-switch" role="group" aria-label="Unidad de peso">
@@ -1242,6 +1274,8 @@ body.lectura .solo-clinico{display:none !important}
                   </span>
                 </div>
               </div>
+            </div>
+            <div class="row row-2">
               <div class="field">
                 <label for="p-ntalla">Talla (cm)</label>
                 <input type="number" id="p-ntalla" data-pat="nTalla" step="0.1" min="25" max="60" inputmode="decimal">
@@ -1307,6 +1341,7 @@ body.lectura .solo-clinico{display:none !important}
             <button type="button" class="btn btn-ghost btn-sm" data-action="reintentar-nube">Subir todo de nuevo</button>
             <button type="button" class="btn btn-ghost btn-sm" data-action="verificar-nube">Verificar contra la nube</button>
             <button type="button" class="btn btn-ghost btn-sm" data-action="probar-escritura">Probar escritura</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-action="forzar-version">Traer la última versión</button>
           </div>
           <div id="diagnostico"></div>
         </div>
@@ -1757,7 +1792,7 @@ const DOMINIO_USUARIO = "usuario.neopediatrics.app";
    entre dos aparatos, lo primero que hay que descartar es que uno esté
    corriendo una versión distinta del archivo. Sin este número, eso es
    imposible de saber por teléfono. */
-const VERSION_APP = "2026-08-10";
+const VERSION_APP = "2026-08-12b";
 
 const normalizarUsuario = u => String(u||"").trim().toLowerCase()
   .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
@@ -1929,6 +1964,7 @@ const state = {
   omisiones:{},    // id del renglón -> {motivo, por, fecha} — dosis que no aplican a este niño
   borrador:{fecha:hoyISO(), peso:"", pesoOz:"", talla:"", pc:"", muac:"", posicion:"auto", edema:false, nota:""},
   intentoGuardar:false,
+  editandoMedicion:null,   // id de la medición que se está corrigiendo
   overrides:new Set()  // avisos que el clínico ya confirmó explícitamente
 };
 
@@ -2276,7 +2312,8 @@ function medicionesOrdenadas(){
   return [...state.mediciones].sort((a,b)=> a.fecha<b.fecha?-1:1);
 }
 function previaA(fechaISO){
-  const prev = medicionesOrdenadas().filter(m=>m.fecha<fechaISO);
+  const prev = medicionesOrdenadas()
+    .filter(m=>m.fecha<fechaISO && m.id!==state.editandoMedicion);
   return prev.length ? prev[prev.length-1] : null;
 }
 
@@ -2304,8 +2341,8 @@ function validarBorrador(){
     /* Solo molesta si el clínico realmente está capturando algo. Al
        abrir la pantalla, con la fecha puesta en hoy, avisar de duplicado
        no aporta: todavía no está registrando nada. */
-    if(escribiendo && state.mediciones.some(m=>m.fecha===b.fecha)){
-      const y=state.mediciones.find(m=>m.fecha===b.fecha);
+    if(escribiendo && state.mediciones.some(m=>m.fecha===b.fecha && m.id!==state.editandoMedicion)){
+      const y=state.mediciones.find(m=>m.fecha===b.fecha && m.id!==state.editandoMedicion);
       push("dup-fecha","warn",
         `Ya hay una medición del ${fmtFecha(b.fecha)}` +
         (y.peso?` (${fmt(y.peso,2)} kg`:"") + (y.talla?`, ${fmt(y.talla,1)} cm`:"") + (y.peso?")":"") +
@@ -2824,6 +2861,7 @@ function render(){
   renderPacienteForm();
   renderAccesos();
   renderBorrador();
+  renderModoMedicion();
   renderZ();
   renderChart();
   renderTablaMediciones();
@@ -3264,16 +3302,17 @@ function renderTablaMediciones(){
       return `<tr>
         <td>${fmtFecha(m.fecha)}</td>
         <td>${fn?edadTexto(fn,parseISO(m.fecha)):"—"}</td>
-        <td>${m.peso==null?"—":(enLb?`${o.lb} lb ${o.oz} oz`:fmt(m.peso,2))}</td>
-        <td style="color:var(--muted)">${m.peso==null?"—":(enLb?fmt(m.peso,2):`${o.lb} lb ${o.oz} oz`)}</td>
-        <td>${m.talla?fmt(m.talla,1):"—"}</td>
-        <td>${m.pc?fmt(m.pc,1):"—"}</td>
-        <td>${z("wfa")}</td><td>${z("lhfa")}</td><td>${z("wfl")}</td><td>${z("hcfa")}</td>
-        <td>${m.muac?fmt(m.muac,0):"—"}</td>
-        <td>${m.edema?'<span class="pill pill-late">sí</span>':"—"}</td>
-        <td style="color:var(--muted)">${esc(m.nota||"")}</td>
-        <td class="act no-print">${puedeEditar()?`<button type="button" class="link link-danger"
-          data-action="borrar-medicion" data-id="${m.id}">Borrar</button>`:""}</td>
+        <td data-l="Peso">${m.peso==null?"—":(enLb?`${o.lb} lb ${o.oz} oz`:fmt(m.peso,2))}</td>
+        <td data-l="=" style="color:var(--muted)">${m.peso==null?"—":(enLb?fmt(m.peso,2):`${o.lb} lb ${o.oz} oz`)}</td>
+        <td data-l="Talla">${m.talla?fmt(m.talla,1):"—"}</td>
+        <td data-l="PC">${m.pc?fmt(m.pc,1):"—"}</td>
+        <td data-l="P/E">${z("wfa")}</td><td data-l="T/E">${z("lhfa")}</td><td data-l="P/T">${z("wfl")}</td><td data-l="PC/E">${z("hcfa")}</td>
+        <td data-l="MUAC">${m.muac?fmt(m.muac,0):"—"}</td>
+        <td data-l="Edema">${m.edema?'<span class="pill pill-late">sí</span>':"—"}</td>
+        <td data-l="Nota" style="color:var(--muted)">${esc(m.nota||"")}</td>
+        <td class="act no-print">${puedeEditar()?`
+          <button type="button" class="link" data-action="editar-medicion" data-id="${m.id}">Editar</button>
+          <button type="button" class="link link-danger" data-action="borrar-medicion" data-id="${m.id}">Borrar</button>`:""}</td>
       </tr>`;
     }).join("")}</tbody>`;
 }
@@ -4297,6 +4336,7 @@ document.addEventListener("click", e=>{
   else if(a==="unidad"){
     const nueva=b.dataset.u;
     if(nueva!==state.unidadPeso){
+      document.activeElement?.blur?.();
       /* Se convierte lo ya escrito para que el peso real no cambie al
          cambiar de unidad. */
       const kg=pesoKg();
@@ -4321,6 +4361,8 @@ document.addEventListener("click", e=>{
   }
   else if(a==="override"){ state.overrides.add(b.dataset.id); renderBorrador(); }
   else if(a==="guardar-medicion") guardarMedicion();
+  else if(a==="editar-medicion") editarMedicion(b.dataset.id);
+  else if(a==="limpiar-medicion" && state.editandoMedicion){ cancelarEdicion(); }
   else if(a==="limpiar-medicion"){ state.intentoGuardar=false; state.borrador={fecha:hoyISO(),peso:"", pesoOz:"",talla:"",pc:"",muac:"",posicion:"auto",edema:false,nota:""}; state.overrides.clear(); renderBorrador(); renderZ(); }
   else if(a==="borrar-medicion") borrarMedicion(b.dataset.id);
   else if(a==="hito-noaun"){
@@ -4348,6 +4390,7 @@ document.addEventListener("click", e=>{
   else if(a==="reintentar-nube") reintentarNube();
   else if(a==="subir-todo") subirPendientes(false);
   else if(a==="probar-escritura") probarEscritura();
+  else if(a==="forzar-version") forzarVersion();
   else if(a==="copiar-uid"){
     const t=state.sinVinculo?.uid||"";
     if(navigator.clipboard?.writeText){
@@ -4432,13 +4475,30 @@ document.addEventListener("keydown", e=>{
   }
 });
 
+/* En modo libras y onzas, el punto salta a las onzas. Así «11.3» se
+   teclea de corrido, sin buscar la segunda casilla: se escribe once,
+   punto, tres. La coma hace lo mismo, porque en el teclado numérico del
+   teléfono a veces aparece una y no el otro. */
+document.addEventListener("keydown", e=>{
+  const el=e.target;
+  if(state.unidadPeso!=="lb") return;
+  if(el.id!=="m-peso" && el.id!=="p-npeso") return;
+  if(e.key!=="." && e.key!=="," ) return;
+  e.preventDefault();
+  const destino = el.id==="m-peso" ? "m-peso-oz" : "p-npeso-oz";
+  const d=document.getElementById(destino);
+  d?.focus(); d?.select();
+});
+
 /* Enter avanza al siguiente campo: la captura no necesita ratón. */
 document.addEventListener("keydown", e=>{
   if(e.key!=="Enter") return;
   const el=e.target;
   if(!el.dataset.input) return;
   e.preventDefault();
-  const orden=["fecha","peso","talla","pc","nota"];
+  const orden = state.unidadPeso==="lb"
+    ? ["fecha","peso","pesoOz","talla","pc","nota"]
+    : ["fecha","peso","talla","pc","nota"];
   const i=orden.indexOf(el.dataset.input);
   if(i>=0&&i<orden.length-1) document.querySelector(`[data-input="${orden[i+1]}"]`)?.focus();
   else guardarMedicion();
@@ -4454,6 +4514,27 @@ document.addEventListener("keydown", e=>{
    falla. Es la forma más rápida de saber si el problema está en la regla
    del paciente, en la de mediciones o en la de dosis: cada una es un
    bloque distinto de las reglas. */
+/* Desmonta el trabajador de servicio y vacía su caché.
+   Hace falta porque una versión antigua del propio archivo es
+   indistinguible de un fallo: el usuario ve que algo «no funciona»
+   cuando en realidad está corriendo código de hace tres días. Los datos
+   viven en Firestore y en el almacenamiento local, que esto no toca. */
+async function forzarVersion(){
+  aviso("d-alerts","warn","Descartando la copia guardada…");
+  try{
+    if("serviceWorker" in navigator){
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r=>r.unregister()));
+    }
+    if(window.caches){
+      const ks = await caches.keys();
+      await Promise.all(ks.map(k=>caches.delete(k)));
+    }
+  }catch(e){ console.warn("forzarVersion", e); }
+  aviso("d-alerts","ok","Listo. Recargando con la última versión…");
+  setTimeout(()=>location.reload(true), 900);
+}
+
 async function probarEscritura(){
   if(!Nube.activa()){ aviso("d-alerts","warn","Sin conexión con Firebase."); return; }
   const correo = Nube.auth.currentUser.email.toLowerCase();
@@ -4652,6 +4733,7 @@ function renderDiagnostico(){
       <span class="dg-k">${k}</span>
       <span class="dg-v ${ok===true?"si":ok===false?"no":""}">${v}</span></div>`;
   host.innerHTML =
+    fila("Versión de la herramienta", VERSION_APP) +
     fila("Conexión con Firebase", Nube.estado==="lista"?"Conectado":"Modo local", Nube.estado==="lista") +
     fila("Cuenta", u?esc(u.email):"—", !!u) +
     fila("Correo verificado", u ? (u.emailVerified?"Sí":"No") : "—", u?u.emailVerified:null) +
@@ -5504,6 +5586,73 @@ function sincronizarPaciente(){
 /* ============================================================
    ACCIONES
    ============================================================ */
+/* Corregir una medición no puede obligar a borrarla y volver a
+   teclearla: eso pierde la nota, el perímetro braquial y la firma de
+   quién la capturó, y en un expediente clínico borrar para reescribir es
+   justo lo que no se debe hacer. Se carga en el mismo formulario, con
+   sus validaciones, y al guardar se reemplaza conservando su identidad y
+   dejando constancia de la corrección. */
+function editarMedicion(id){
+  if(!puedeEditar()) return;
+  const m = state.mediciones.find(x=>x.id===id);
+  if(!m) return;
+  /* El formulario no pisa lo que el clínico está escribiendo, y esa
+     protección se activa mirando qué campo tiene el foco. Al cargar una
+     medición para corregirla estamos reemplazando el contenido a
+     propósito, así que hay que soltar el foco primero o el campo se
+     queda con lo que tuviera. */
+  document.activeElement?.blur?.();
+  const o = m.peso!=null ? kgALbOz(m.peso) : {lb:"",oz:""};
+  state.editandoMedicion = id;
+  state.intentoGuardar = false;
+  state.overrides.clear();
+  state.borrador = {
+    fecha: m.fecha,
+    peso: m.peso==null ? "" : (state.unidadPeso==="lb" ? String(o.lb) : String(m.peso)),
+    pesoOz: (m.peso!=null && state.unidadPeso==="lb") ? String(o.oz) : "",
+    talla: m.talla==null?"":String(m.talla),
+    pc: m.pc==null?"":String(m.pc),
+    muac: m.muac==null?"":String(m.muac),
+    posicion: m.posicion||"auto",
+    edema: !!m.edema,
+    nota: m.nota||""
+  };
+  state.tab = "captura";
+  render();
+  document.getElementById("card-medicion")?.scrollIntoView?.({behavior:"smooth",block:"start"});
+  document.querySelector('[data-input="peso"]')?.focus();
+}
+
+function cancelarEdicion(){
+  document.activeElement?.blur?.();
+  state.editandoMedicion = null;
+  state.intentoGuardar = false;
+  state.overrides.clear();
+  state.borrador = {fecha:hoyISO(),peso:"",pesoOz:"",talla:"",pc:"",muac:"",posicion:"auto",edema:false,nota:""};
+  render();
+}
+
+function renderModoMedicion(){
+  const ed = state.editandoMedicion;
+  const m = ed ? state.mediciones.find(x=>x.id===ed) : null;
+  const t=document.getElementById("med-titulo");
+  const g=document.getElementById("med-guardar");
+  const l=document.getElementById("med-limpiar");
+  const c=document.getElementById("card-medicion");
+  if(!t) return;
+  if(m){
+    t.innerHTML = `Corrigiendo la medición del ${fmtFecha(m.fecha)}`;
+    g.textContent = "Guardar la corrección";
+    l.textContent = "Cancelar";
+    c.classList.add("editando");
+  }else{
+    t.textContent = "Nueva medición";
+    g.textContent = "Guardar medición";
+    l.textContent = "Limpiar";
+    c.classList.remove("editando");
+  }
+}
+
 function guardarMedicion(){
   if(!puedeEditar()) return;
   state.intentoGuardar = true;
@@ -5515,8 +5664,10 @@ function guardarMedicion(){
     return;
   }
   const b=state.borrador;
-  state.mediciones.push({
-    id:"m"+Date.now().toString(36),
+  const editando = state.editandoMedicion
+    ? state.mediciones.find(x=>x.id===state.editandoMedicion) : null;
+  const registro = {
+    id: editando ? editando.id : "m"+Date.now().toString(36),
     fecha:b.fecha,
     peso:pesoKg(),
     talla:parseFloat(b.talla)||null,
@@ -5525,13 +5676,22 @@ function guardarMedicion(){
     posicion:b.posicion||"auto",
     edema:!!b.edema,
     nota:b.nota.trim(),
-    capturadoEn:new Date().toISOString(),
-    capturadoPor:state.sesion?.email||"",
-    sede:state.sede
-  });
+    capturadoEn: editando ? editando.capturadoEn : new Date().toISOString(),
+    capturadoPor: editando ? editando.capturadoPor : (state.sesion?.email||""),
+    sede: editando ? (editando.sede||state.sede) : state.sede
+  };
+  if(editando){
+    /* La corrección queda firmada: quién y cuándo. Sin eso, un dato
+       cambiado es indistinguible de uno mal tomado desde el principio. */
+    registro.corregidoPor = state.sesion?.email||"";
+    registro.corregidoEn = new Date().toISOString();
+    state.mediciones = state.mediciones.map(x=> x.id===registro.id ? registro : x);
+  }else{
+    state.mediciones.push(registro);
+  }
+  state.editandoMedicion = null;
   Store.saveMediciones(state.mediciones);
-  const nueva = state.mediciones[state.mediciones.length-1];
-  state.pendMediciones.add(nueva.id);
+  state.pendMediciones.add(registro.id);
   guardarPendientes(); renderPendientes();
   subirPendientes(true).then(()=>renderPendientes());
   state.borrador={fecha:hoyISO(),peso:"", pesoOz:"",talla:"",pc:"",muac:"",posicion:"auto",edema:false,nota:""};
