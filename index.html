@@ -256,6 +256,27 @@ button{font:inherit}
 
 /* El edema manda sobre cualquier z-score: la casilla se pinta de rojo
    cuando está marcada para que no pase inadvertida. */
+.seg-origen{display:grid;grid-template-columns:1fr 1fr;gap:var(--s2)}
+.seg-origen button{
+  text-align:left;border:1.5px solid var(--line-strong);background:var(--surface);
+  border-radius:var(--r-sm);padding:10px 12px;cursor:pointer;line-height:1.3;
+}
+.seg-origen button b{display:block;font-size:var(--f-13);color:var(--ink);font-weight:700}
+.seg-origen button span{display:block;font-size:11px;color:var(--muted);margin-top:2px}
+.seg-origen button[aria-pressed="true"]{
+  border-color:var(--brand);background:var(--brand-soft);
+  box-shadow:inset 0 0 0 1px var(--brand);
+}
+.seg-origen button[aria-pressed="true"] b{color:var(--np-navy)}
+@media (max-width:520px){.seg-origen{grid-template-columns:1fr}}
+
+/* Azul de marca, no ámbar: una dosis documentada en el carné no es una
+   advertencia ni un dato de segunda, solo tiene otra procedencia. */
+#tbl-vac .externo{
+  display:inline-block;font-size:10px;font-weight:700;color:var(--brand);
+  background:var(--brand-soft);border-radius:99px;padding:1px 7px;margin-top:2px;
+}
+
 .check-edema{
   display:flex;gap:var(--s2);align-items:flex-start;padding:var(--s3);
   border:1.5px solid var(--line-strong);border-radius:var(--r);background:var(--surface-2);
@@ -597,7 +618,8 @@ code{font:var(--f-12)/1.4 var(--mono);background:var(--surface-2);padding:1px 5p
 .login-screen{
   position:fixed;inset:0;z-index:60;
   display:flex;align-items:center;justify-content:center;
-  padding:var(--s5) var(--s4);overflow:auto;
+  width:100vw;max-width:100vw;
+  padding:var(--s5) var(--s4);overflow:auto;overscroll-behavior:contain;
   background:
     radial-gradient(130% 95% at 50% 5%, #2E7EBD 0%, #17548F 46%, #0D3763 100%);
 }
@@ -706,6 +728,13 @@ code{font:var(--f-12)/1.4 var(--mono);background:var(--surface-2);padding:1px 5p
 .sede-switch{margin-left:0}
 
 /* Modo lectura: se retira todo lo que escribe, no solo se deshabilita. */
+body.sin-sesion .wrap,
+body.sin-sesion .topbar,
+body.sin-sesion .modal,
+body.sin-sesion .doc-overlay{display:none !important}
+body.sin-sesion{overflow:hidden}
+html,body{max-width:100%;overflow-x:hidden}
+
 body.lectura .solo-clinico{display:none !important}
 .dg{border:1px solid var(--line);border-radius:var(--r);padding:var(--s3);margin-top:var(--s4);
   background:var(--surface-2)}
@@ -1339,6 +1368,19 @@ body.lectura .solo-clinico{display:none !important}
           <input type="text" id="dm-comp" autocomplete="off" placeholder="HBsAg purificado">
         </div>
       </div>
+      <div class="field">
+        <label>¿De dónde viene este registro?</label>
+        <div class="seg-origen" role="group" aria-label="Origen del registro">
+          <button type="button" data-action="dm-origen" data-o="clinica" aria-pressed="true">
+            <b>Aplicada en la clínica</b><span>Con lote, vencimiento y sitio</span>
+          </button>
+          <button type="button" data-action="dm-origen" data-o="externo" aria-pressed="false">
+            <b>Documentada en carné</b><span>Aplicada en otro servicio</span>
+          </button>
+        </div>
+        <p class="hint" id="dm-origen-nota"></p>
+      </div>
+
       <div class="row row-3">
         <div class="field">
           <label for="dm-lote">Lote</label>
@@ -1349,7 +1391,10 @@ body.lectura .solo-clinico{display:none !important}
           <input type="month" id="dm-venc">
         </div>
         <div class="field">
-          <label for="dm-fecha-txt">Fecha de administración</label>
+          <div class="lbl-row">
+            <label for="dm-fecha-txt">Fecha de administración</label>
+            <button type="button" class="link" data-action="dm-nacer" id="dm-nacer-btn" hidden>Al nacer</button>
+          </div>
           <div class="fecha-campo">
             <input type="text" id="dm-fecha-txt" class="f-txt" data-target="dm-fecha"
                    inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" autocomplete="off">
@@ -1370,7 +1415,7 @@ body.lectura .solo-clinico{display:none !important}
       <div class="row row-2">
         <div class="field">
           <div class="lbl-row">
-            <label for="dm-resp">Responsable de la administración</label>
+            <label for="dm-resp" id="dm-resp-lbl">Responsable de la administración</label>
             <button type="button" class="link" data-action="dm-yo" id="dm-yo-btn">Usar el predeterminado</button>
           </div>
           <input type="text" id="dm-resp" autocomplete="off" placeholder="Quién aplicó la dosis">
@@ -1837,6 +1882,7 @@ const state = {
   hitos:{},        // id del hito -> {fecha, nota}
   omisiones:{},    // id del renglón -> {motivo, por, fecha} — dosis que no aplican a este niño
   borrador:{fecha:hoyISO(), peso:"", talla:"", pc:"", muac:"", posicion:"auto", edema:false, nota:""},
+  intentoGuardar:false,
   overrides:new Set()  // avisos que el clínico ya confirmó explícitamente
 };
 
@@ -2140,8 +2186,16 @@ function previaA(fechaISO){
 
 function validarBorrador(){
   const av=[], b=state.borrador, p=state.paciente;
+  /* Un formulario recién abierto no tiene errores: está vacío. Avisar
+     «registre al menos una medición» antes de que el clínico teclee nada
+     convierte el panel en ruido permanente, y el ruido permanente se
+     deja de leer. Los avisos estructurales solo aparecen al intentar
+     guardar; los clínicos, mientras se escribe. */
+  const escribiendo = !!(b.peso||b.talla||b.pc||b.muac||b.edema);
   const fn=parseISO(p.fn), f=parseISO(b.fecha);
   const push=(id,tipo,txt)=>av.push({id,tipo:state.overrides.has(id)?"warn-ok":tipo,txt});
+
+  if(!escribiendo && !state.intentoGuardar) return av;
 
   if(!p.nombre.trim()) av.push({id:"sin-nombre",tipo:"block",txt:"Falta el nombre del paciente. Complételo en <b>Datos del paciente</b>."});
   if(!fn) av.push({id:"sin-fn",tipo:"block",txt:"Falta la fecha de nacimiento: sin ella no se puede calcular ni la edad ni el z-score."});
@@ -2151,12 +2205,21 @@ function validarBorrador(){
   if(fn&&f){
     if(f<fn) av.push({id:"antes-fn",tipo:"block",txt:"La fecha de la consulta es anterior al nacimiento. Revise el año."});
     if(f>parseISO(hoyISO())) av.push({id:"futuro",tipo:"block",txt:"La fecha de la consulta está en el futuro."});
-    if(state.mediciones.some(m=>m.fecha===b.fecha))
-      push("dup-fecha","warn","Ya hay una medición registrada en esta misma fecha. Si es una corrección, borre la anterior en el historial.");
+    /* Solo molesta si el clínico realmente está capturando algo. Al
+       abrir la pantalla, con la fecha puesta en hoy, avisar de duplicado
+       no aporta: todavía no está registrando nada. */
+    if(escribiendo && state.mediciones.some(m=>m.fecha===b.fecha)){
+      const y=state.mediciones.find(m=>m.fecha===b.fecha);
+      push("dup-fecha","warn",
+        `Ya hay una medición del ${fmtFecha(b.fecha)}` +
+        (y.peso?` (${fmt(y.peso,2)} kg`:"") + (y.talla?`, ${fmt(y.talla,1)} cm`:"") + (y.peso?")":"") +
+        `. Si viene a corregirla, bórrela en el historial; si es una segunda toma del mismo día, confirme y quedarán las dos.`);
+    }
   }
 
   const peso=pesoKg(b.peso), talla=parseFloat(b.talla), pc=parseFloat(b.pc);
-  if(!peso&&!talla&&!pc) av.push({id:"vacio",tipo:"block",txt:"Registre al menos una medición."});
+  if(!peso&&!talla&&!pc&&state.intentoGuardar)
+    av.push({id:"vacio",tipo:"block",txt:"Escriba al menos un peso, una talla o un perímetro cefálico."});
 
   const prev = f ? previaA(b.fecha) : null;
   if(prev && f){
@@ -2616,6 +2679,14 @@ async function iniciarSesion(mail, pass){
 function renderSesion(){
   const s=state.sesion;
   document.getElementById("login").hidden = !!s;
+  /* Mientras no hay sesión, la aplicación entera se retira del documento.
+     No es cosmético: la tabla del esquema es más ancha que un teléfono, y
+     un documento más ancho que la pantalla hace que el navegador móvil
+     encoja el zoom. Como la pantalla de ingreso está posicionada respecto
+     al documento y no a lo que se ve, su tarjeta «centrada» quedaba
+     centrada en un lienzo de mil y pico de píxeles: abajo y a la derecha,
+     fuera de la vista. Sin contenido detrás, no hay lienzo de más. */
+  document.body.classList.toggle("sin-sesion", !s);
   document.body.classList.toggle("lectura", !!s && !puedeEditar());
   const host=document.getElementById("sesion");
   if(!s){ host.innerHTML=""; return; }
@@ -2813,8 +2884,14 @@ function renderBorrador(){
   const av=validarBorrador();
   document.getElementById("m-alerts").innerHTML = av.map(a=>{
     const cls = a.tipo==="block"?"alert-block":a.tipo==="warn"?"alert-warn":"alert-ok";
-    const btn = (a.tipo==="warn"||a.tipo==="block") && a.id!=="sin-nombre" && !a.id.startsWith("sin-")
-      ? `<button type="button" class="link" data-action="override" data-id="${a.id}">Confirmar dato</button>` : "";
+    /* «Confirmar dato» solo aparece donde el clínico puede afirmar que el
+       valor es correcto pese al aviso. En un error estructural —falta el
+       nombre, falta la fecha, no hay nada escrito— no hay nada que
+       confirmar, y ofrecerlo desconcierta. */
+    const confirmable = ["talla-baja","pc-baja","peso-baja","peso-salto","peso-lb","dup-fecha"]
+                        .includes(a.id) || a.id.startsWith("z-");
+    const btn = confirmable
+      ? `<button type="button" class="link" data-action="override" data-id="${a.id}">Sí, el dato es correcto</button>` : "";
     return `<div class="alert ${cls}"><div>${a.txt} ${btn}</div></div>`;
   }).join("");
 }
@@ -3169,6 +3246,7 @@ function renderVacunas(){
           <div class="dosis-rol">${etiquetaDosis(e)}</div>
           ${e.protege?`<div class="protege">Previene ${e.protege}</div>`:""}
           ${d?.nombreComercial?`<div class="marca">${esc(d.nombreComercial)}</div>`:""}
+          ${d?.fecha&&d.origen==="externo"?`<div class="externo">Documentada en carné</div>`:""}
           ${e.omitida&&state.omisiones[key]?.motivo
             ? `<div class="motivo">No aplica: ${esc(state.omisiones[key].motivo)}</div>`:""}</td>
         <td data-l="Composición">${esc(d?.composicion || (d?.fecha ? "" : "") )||'<span class="vacio">—</span>'}</td>
@@ -3861,7 +3939,8 @@ function buildDoc(){
     ? `<div class="doc-vac">${aplicadas.map(i=>
         `<div class="it"><span class="tick">✓</span><span class="n">${esc(i.e.etiqueta)}${
           i.d?.nombreComercial?`<span class="marca"> · ${esc(i.d.nombreComercial)}</span>`:""}${
-          i.d?.lote?`<span class="marca"> · lote ${esc(i.d.lote)}</span>`:""}</span>
+          i.d?.lote?`<span class="marca"> · lote ${esc(i.d.lote)}</span>`:""}${
+          i.d?.origen==="externo"?`<span class="marca"> · documentada en carné</span>`:""}</span>
          <span class="f">${i.d?.fecha?fmtFecha(i.d.fecha):""}</span></div>`).join("")}</div>`
     : `<p class="doc-note">Todavía no hay dosis registradas en este expediente.</p>`;
 
@@ -4072,7 +4151,7 @@ document.addEventListener("click", e=>{
   }
   else if(a==="override"){ state.overrides.add(b.dataset.id); renderBorrador(); }
   else if(a==="guardar-medicion") guardarMedicion();
-  else if(a==="limpiar-medicion"){ state.borrador={fecha:hoyISO(),peso:"",talla:"",pc:"",muac:"",posicion:"auto",edema:false,nota:""}; state.overrides.clear(); renderBorrador(); renderZ(); }
+  else if(a==="limpiar-medicion"){ state.intentoGuardar=false; state.borrador={fecha:hoyISO(),peso:"",talla:"",pc:"",muac:"",posicion:"auto",edema:false,nota:""}; state.overrides.clear(); renderBorrador(); renderZ(); }
   else if(a==="borrar-medicion") borrarMedicion(b.dataset.id);
   else if(a==="hito-noaun"){
     if(!puedeEditar()) return;
@@ -4119,6 +4198,14 @@ document.addEventListener("click", e=>{
   else if(a==="acceso-cerrar") document.getElementById("acceso-modal").hidden=true;
   else if(a==="am-tipo"){ tipoAcceso=b.dataset.t; renderTipoAcceso(); }
   else if(a==="am-generar") document.getElementById("am-pass").value=claveSugerida();
+  else if(a==="dm-origen"){ origenDosis=b.dataset.o; renderOrigenDosis(); }
+  else if(a==="dm-nacer"){
+    const fnp=state.paciente.fn;
+    if(fnp){
+      document.getElementById("dm-fecha").value=fnp;
+      document.getElementById("dm-fecha-txt").value=textoDesdeIso(fnp);
+    }
+  }
   else if(a==="dm-yo"){
     const yo=datosClinico(state.sesion?.email);
     document.getElementById("dm-resp").value = yo?.nombre || "";
@@ -4688,7 +4775,35 @@ async function guardarAcceso(){
    porque son los datos que se piden cuando hay que rastrear un lote
    o documentar una reacción local.
    ============================================================ */
-let dosisEditando = null;   // {m, v, key}
+let dosisEditando = null;   // {e, key}
+let origenDosis = "clinica";
+
+/* Distinguir lo que aplicamos de lo que transcribimos del carné no es un
+   detalle administrativo. Si mañana hay que rastrear un lote o responder
+   por una reacción, el registro tiene que decir cuál de las dos cosas es:
+   de una dosis ajena solo consta lo que alguien escribió a mano en un
+   papel, y eso no se puede afirmar con la misma fuerza. */
+function renderOrigenDosis(){
+  const externo = origenDosis==="externo";
+  document.querySelectorAll('[data-action="dm-origen"]').forEach(b=>
+    b.setAttribute("aria-pressed", String(b.dataset.o===origenDosis)));
+  /* «Según el carné» desplaza la responsabilidad y «no consta» suena a
+     sospecha. El carné de vacunación es un documento válido: lo correcto
+     es decir que la dosis está documentada en él, que es exactamente lo
+     que ocurrió y no pone en duda nada. La distinción técnica —origen
+     externo— se conserva igual en el expediente. */
+  document.getElementById("dm-origen-nota").innerHTML = externo
+    ? "Queda registrada como <b>dosis documentada en el carné del paciente</b>. Transcriba los datos que el carné consigne; lo que no aparezca, déjelo vacío."
+    : "";
+  document.getElementById("dm-resp-lbl").textContent = externo
+    ? "Servicio o profesional que la administró"
+    : "Responsable de la administración";
+  document.getElementById("dm-resp").placeholder = externo
+    ? "Como figura en el carné"
+    : "Quién aplicó la dosis";
+  const yo=document.getElementById("dm-yo-btn");
+  if(yo) yo.hidden = externo || !datosClinico(state.sesion?.email);
+}
 
 /* Marcar «no aplica» no borra nada: deja constancia de que alguien
    decidió que esa dosis no corresponde a este niño, con el motivo y la
@@ -4738,6 +4853,7 @@ function abrirDosis(id){
   dosisEditando = {e, key:id};
   const d = state.dosis[id] || {};
   const cat = CATALOGO[e.bio] || {marcas:[], comp:"", via:"IM"};
+  origenDosis = d.origen || "clinica";
   const fn = parseISO(state.paciente.fn);
 
   document.getElementById("dm-titulo").textContent = e.bio;
@@ -4779,6 +4895,12 @@ function abrirDosis(id){
     if(pred) btnYo.textContent = "Usar " + pred.nombre;
   }
   document.getElementById("dm-borrar").hidden = !d.fecha;
+  /* Hepatitis B y BCG se ponen en la sala de partos, no «alrededor de»
+     la fecha de nacimiento: es esa fecha exacta. Un atajo evita teclearla
+     y evita el error de poner la del día de la consulta. */
+  const btnNacer=document.getElementById("dm-nacer-btn");
+  if(btnNacer) btnNacer.hidden = !(e.clase==="neonatal" || e.clase==="unica") || !state.paciente.fn;
+  renderOrigenDosis();
   document.getElementById("dm-alerts").innerHTML = "";
 
   conectarFechas();
@@ -4803,7 +4925,16 @@ function guardarDosis(){
   if(fn && f && f < fn){ aviso("dm-alerts","block","La fecha es anterior al nacimiento del paciente."); return; }
   if(f && f > parseISO(hoyISO())){ aviso("dm-alerts","block","La fecha de administración está en el futuro."); return; }
   const resp = document.getElementById("dm-resp").value.trim();
-  if(!resp){ aviso("dm-alerts","block","Registre quién administró la dosis. Es el dato que hace válido el registro."); return; }
+  if(!resp && origenDosis==="clinica"){
+    aviso("dm-alerts","block","Registre quién administró la dosis. Es el dato que hace válido el registro."); return; }
+  if(!resp && origenDosis==="externo"){
+    /* Muchos carnés traen el sello del puesto de salud pero no el nombre
+       de quien aplicó. Exigirlo obligaría a inventar, y escribir «no
+       consta» junto a la vacuna de un niño se lee como si dudáramos de
+       ella. Se nombra al emisor del documento, que es lo que de verdad
+       respalda el registro. */
+    document.getElementById("dm-resp").value = "Servicio de salud emisor del carné";
+  }
 
   const venc = document.getElementById("dm-venc").value;
   if(venc && fecha && venc < fecha.slice(0,7)){
@@ -4821,7 +4952,8 @@ function guardarDosis(){
     fecha,
     via:document.getElementById("dm-via").value,
     sitio:document.getElementById("dm-sitio").value,
-    responsable:resp,
+    origen:origenDosis,
+    responsable:resp || "Servicio de salud emisor del carné",
     colegiado:document.getElementById("dm-col").value.trim(),
     observaciones:document.getElementById("dm-obs").value.trim(),
     registradoPor:state.sesion?.email||"",
@@ -5204,11 +5336,12 @@ function sincronizarPaciente(){
    ============================================================ */
 function guardarMedicion(){
   if(!puedeEditar()) return;
+  state.intentoGuardar = true;
   const av=validarBorrador();
   const bloqueos=av.filter(x=>x.tipo==="block");
   if(bloqueos.length){
     renderBorrador();
-    document.getElementById("m-alerts").scrollIntoView({behavior:"smooth",block:"nearest"});
+    document.getElementById("m-alerts")?.scrollIntoView?.({behavior:"smooth",block:"nearest"});
     return;
   }
   const b=state.borrador;
@@ -5233,6 +5366,7 @@ function guardarMedicion(){
   subirPendientes(true).then(()=>renderPendientes());
   state.borrador={fecha:hoyISO(),peso:"",talla:"",pc:"",muac:"",posicion:"auto",edema:false,nota:""};
   state.overrides.clear();
+  state.intentoGuardar = false;
   render();
   document.querySelector('[data-input="peso"]')?.focus();
 }
