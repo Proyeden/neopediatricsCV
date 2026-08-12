@@ -256,6 +256,15 @@ button{font:inherit}
 
 /* El edema manda sobre cualquier z-score: la casilla se pinta de rojo
    cuando está marcada para que no pase inadvertida. */
+.peso-campo{display:flex;gap:var(--s2)}
+.peso-campo .cajita{position:relative;flex:1;min-width:0}
+.peso-campo .cajita[hidden]{display:none}
+.peso-campo input{padding-right:34px}
+.peso-campo i{
+  position:absolute;right:10px;top:50%;transform:translateY(-50%);
+  font-style:normal;font-size:var(--f-12);font-weight:700;color:var(--muted);pointer-events:none;
+}
+
 .seg-origen{display:grid;grid-template-columns:1fr 1fr;gap:var(--s2)}
 .seg-origen button{
   text-align:left;border:1.5px solid var(--line-strong);background:var(--surface);
@@ -268,7 +277,16 @@ button{font:inherit}
   box-shadow:inset 0 0 0 1px var(--brand);
 }
 .seg-origen button[aria-pressed="true"] b{color:var(--np-navy)}
-@media (max-width:520px){.seg-origen{grid-template-columns:1fr}}
+@media (max-width:520px){.peso-campo{display:flex;gap:var(--s2)}
+.peso-campo .cajita{position:relative;flex:1;min-width:0}
+.peso-campo .cajita[hidden]{display:none}
+.peso-campo input{padding-right:34px}
+.peso-campo i{
+  position:absolute;right:10px;top:50%;transform:translateY(-50%);
+  font-style:normal;font-size:var(--f-12);font-weight:700;color:var(--muted);pointer-events:none;
+}
+
+.seg-origen{grid-template-columns:1fr}}
 
 /* Azul de marca, no ámbar: una dosis documentada en el carné no es una
    advertencia ni un dato de segunda, solo tiene otra procedencia. */
@@ -981,7 +999,17 @@ body.lectura .solo-clinico{display:none !important}
                   <button type="button" data-action="unidad" data-u="lb" aria-pressed="false">lb</button>
                 </span>
               </div>
-              <input type="number" id="m-peso" data-input="peso" step="0.01" inputmode="decimal" placeholder="0.00">
+              <div class="peso-campo">
+                <span class="cajita">
+                  <input type="number" id="m-peso" data-input="peso" step="0.01" inputmode="decimal" placeholder="0">
+                  <i id="m-peso-u">kg</i>
+                </span>
+                <span class="cajita" id="m-oz-caja" hidden>
+                  <input type="number" id="m-peso-oz" data-input="pesoOz" step="1" min="0" max="15"
+                         inputmode="numeric" placeholder="0">
+                  <i>oz</i>
+                </span>
+              </div>
             </div>
             <div class="field">
               <label for="m-talla">Talla (cm)</label>
@@ -1202,7 +1230,17 @@ body.lectura .solo-clinico{display:none !important}
                     <button type="button" data-action="unidad" data-u="lb" aria-pressed="false">lb</button>
                   </span>
                 </div>
-                <input type="number" id="p-npeso" data-pat="nPeso" step="0.01" inputmode="decimal">
+                <div class="peso-campo">
+                  <span class="cajita">
+                    <input type="number" id="p-npeso" data-pat="nPeso" step="0.01" inputmode="decimal" placeholder="0">
+                    <i id="p-npeso-u">kg</i>
+                  </span>
+                  <span class="cajita" id="p-oz-caja" hidden>
+                    <input type="number" id="p-npeso-oz" data-pat="nPesoOz" step="1" min="0" max="15"
+                           inputmode="numeric" placeholder="0">
+                    <i>oz</i>
+                  </span>
+                </div>
               </div>
               <div class="field">
                 <label for="p-ntalla">Talla (cm)</label>
@@ -1889,14 +1927,14 @@ const state = {
   dosis:{},        // id del renglón del esquema -> registro completo de la dosis
   hitos:{},        // id del hito -> {fecha, nota}
   omisiones:{},    // id del renglón -> {motivo, por, fecha} — dosis que no aplican a este niño
-  borrador:{fecha:hoyISO(), peso:"", talla:"", pc:"", muac:"", posicion:"auto", edema:false, nota:""},
+  borrador:{fecha:hoyISO(), peso:"", pesoOz:"", talla:"", pc:"", muac:"", posicion:"auto", edema:false, nota:""},
   intentoGuardar:false,
   overrides:new Set()  // avisos que el clínico ya confirmó explícitamente
 };
 
 function blankPaciente(){
   return {nombre:"",fn:"",sexo:"",eg:"",sangre:"",alergias:"",
-          nPeso:"",nTalla:"",nPc:"",tel:"",notaEncargado:""};
+          nPeso:"",nPesoLb:"",nPesoOz:"",nTalla:"",nPc:"",tel:"",notaEncargado:""};
 }
 
 /* ============================================================
@@ -2164,20 +2202,70 @@ function indicadores(peso,talla,pc,meses,sexo,extra){
   return r;
 }
 
-const kgToLb = kg => kg*2.20462;
-const lbToKg = lb => lb/2.20462;
-/* Un único punto de conversión: la entrada puede ser libras, el expediente
-   nunca lo es. Así no se repite el problema del Excel, donde la misma
-   columna guardaba «9.15» en libras y «5.27 - 11.20» en las dos unidades. */
-const pesoKg = v => {
-  const n=parseFloat(v);
-  if(!n||isNaN(n)) return null;
-  return state.unidadPeso==="lb" ? lbToKg(n) : n;
-};
-const pesoEnUnidad = kg => kg==null||isNaN(kg) ? "" :
-  (state.unidadPeso==="lb" ? kgToLb(kg) : kg).toFixed(2);
 const fmt = (n,d=2) => n==null||isNaN(n) ? "—" : Number(n).toFixed(d);
 const fmtZ = z => z==null ? "—" : (z>=0?"+":"")+z.toFixed(2);
+
+/* ============================================================
+   PESO: LIBRAS Y ONZAS
+   En Guatemala el peso del lactante se dice «once tres»: once libras y
+   tres onzas. Escrito «11.3» en un campo decimal serían 11.3 libras
+   —5.126 kg— cuando en realidad son 11 lb 3 oz, 5.074 kg. Cincuenta
+   gramos de diferencia, y un «11.12» decimal no significa nada.
+
+   Por eso el modo libras usa DOS casillas y no un punto: la ambigüedad
+   se elimina en la entrada, no se resuelve adivinando después. El
+   expediente sigue guardando kilogramos, siempre.
+   ============================================================ */
+const LB_KG = 0.45359237;
+const OZ_KG = LB_KG/16;
+
+const kgToLb = kg => kg/LB_KG;
+const lbToKg = lb => lb*LB_KG;
+
+/* kg → {lb, oz} con la onza redondeada; si redondea a 16, sube una libra. */
+function kgALbOz(kg){
+  if(kg==null||isNaN(kg)) return {lb:"",oz:""};
+  const total = kg/OZ_KG;
+  let lb = Math.floor(total/16);
+  let oz = Math.round(total - lb*16);
+  if(oz===16){ lb++; oz=0; }
+  return {lb, oz};
+}
+const lbOzAKg = (lb,oz) => (Number(lb)||0)*LB_KG + (Number(oz)||0)*OZ_KG;
+
+/* Único punto de conversión de la entrada al kilogramo del expediente. */
+const pesoKg = () => {
+  const b = state.borrador;
+  if(state.unidadPeso==="lb"){
+    const lb = parseFloat(b.peso), oz = parseFloat(b.pesoOz);
+    if(!lb && !oz) return null;
+    return lbOzAKg(lb, oz);
+  }
+  const n = parseFloat(b.peso);
+  return (!n||isNaN(n)) ? null : n;
+};
+
+/* Lo mismo para el peso al nacer, que vive en el paciente. */
+const pesoNacerKg = () => {
+  const p = state.paciente;
+  if(state.unidadPeso==="lb"){
+    const lb = parseFloat(p.nPesoLb), oz = parseFloat(p.nPesoOz);
+    if(!lb && !oz) return null;
+    return lbOzAKg(lb, oz);
+  }
+  const n = parseFloat(p.nPeso);
+  return (!n||isNaN(n)) ? null : n;
+};
+
+/* Cómo se escribe un peso en la unidad elegida. */
+function pesoTexto(kg, dec){
+  if(kg==null||isNaN(kg)) return "—";
+  if(state.unidadPeso==="lb"){
+    const {lb,oz} = kgALbOz(kg);
+    return `${lb} lb ${oz} oz`;
+  }
+  return fmt(kg, dec??2)+" kg";
+}
 
 /* ============================================================
    VALIDACIÓN EN EL BORDE
@@ -2225,7 +2313,14 @@ function validarBorrador(){
     }
   }
 
-  const peso=pesoKg(b.peso), talla=parseFloat(b.talla), pc=parseFloat(b.pc);
+  const peso=pesoKg(), talla=parseFloat(b.talla), pc=parseFloat(b.pc);
+  /* Dieciséis onzas son una libra: más de quince en la casilla significa
+     que alguien escribió décimas de libra creyendo que eran onzas. */
+  const ozv=parseFloat(b.pesoOz);
+  if(state.unidadPeso==="lb" && ozv>15)
+    av.push({id:"oz-rango",tipo:"block",
+      txt:`Las onzas van de 0 a 15: dieciséis hacen una libra. Si quiso decir
+           <b>${(parseFloat(b.peso)||0)} lb ${ozv} oz</b>, revise el dato.`});
   if(!peso&&!talla&&!pc&&state.intentoGuardar)
     av.push({id:"vacio",tipo:"block",txt:"Escriba al menos un peso, una talla o un perímetro cefálico."});
 
@@ -2838,7 +2933,8 @@ function renderPacienteForm(){
   document.querySelectorAll("[data-pat]").forEach(el=>{
     const k=el.dataset.pat;
     if(document.activeElement===el) return;
-    el.value = k==="nPeso" ? pesoEnUnidad(parseFloat(state.paciente.nPeso)||null) : (state.paciente[k] ?? "");
+    el.value = (k==="nPeso" && state.unidadPeso==="lb")
+      ? (state.paciente.nPesoLb ?? "") : (state.paciente[k] ?? "");
   });
   document.querySelectorAll("[data-pat]").forEach(el=>{
     if(el.tagName==="SELECT") el.disabled=!puedeEditar();
@@ -2854,8 +2950,9 @@ function renderPacienteForm(){
   document.getElementById("p-eg-nota").innerHTML = eg&&eg<37
     ? `<b>Prematuro (${eg} semanas).</b> Para el z-score de un prematuro se usa la edad corregida hasta los 24 meses; esta versión grafica edad cronológica, así que interprete con ese matiz.`
     : "";
-  document.getElementById("p-nlbs").textContent = p.nPeso
-    ? `${fmt(p.nPeso,3)} kg · ${fmt(kgToLb(parseFloat(p.nPeso)),2)} libras.` : "";
+  const kgN = pesoNacerKg();
+  document.getElementById("p-nlbs").innerHTML = kgN
+    ? `<b>${kgALbOz(kgN).lb} lb ${kgALbOz(kgN).oz} oz</b> = <b>${fmt(kgN,3)} kg</b>.` : "";
 }
 
 function renderBorrador(){
@@ -2864,8 +2961,13 @@ function renderBorrador(){
     const k=el.dataset.input;
     if(document.activeElement===el) return;
     if(el.type==="checkbox"){ el.checked = !!b[k]; return; }
-    el.value = k==="peso" ? (b.peso===""||b.peso==null ? "" : b.peso) : (b[k] ?? "");
+    el.value = b[k] ?? "";
   });
+  const lb = state.unidadPeso==="lb";
+  document.getElementById("m-oz-caja").hidden = !lb;
+  document.getElementById("m-peso-u").textContent = lb ? "lb" : "kg";
+  document.getElementById("p-oz-caja").hidden = !lb;
+  document.getElementById("p-npeso-u").textContent = lb ? "lb" : "kg";
   const txtF=document.getElementById("m-fecha-txt");
   if(txtF && document.activeElement!==txtF) txtF.value=textoDesdeIso(b.fecha);
   const fnB=parseISO(state.paciente.fn), fB=parseISO(b.fecha);
@@ -2874,8 +2976,8 @@ function renderBorrador(){
     : (mB<24 ? "Menor de 24 meses: el patrón espera longitud acostado."
              : "24 meses o más: el patrón espera estatura de pie.");
   const inpPeso=document.getElementById("m-peso");
-  if(state.unidadPeso==="lb"){ inpPeso.min="1"; inpPeso.max="132"; }
-  else { inpPeso.min="0.5"; inpPeso.max="60"; }
+  if(lb){ inpPeso.min="0"; inpPeso.max="132"; inpPeso.step="1"; }
+  else { inpPeso.min="0.5"; inpPeso.max="60"; inpPeso.step="0.01"; }
   document.querySelectorAll('[data-action="unidad"]').forEach(x=>
     x.setAttribute("aria-pressed", String(x.dataset.u===state.unidadPeso)));
   document.querySelectorAll('[data-action="unidad"]').forEach(x=>
@@ -2884,12 +2986,17 @@ function renderBorrador(){
   document.getElementById("m-edad").textContent =
     fn&&f ? "Edad en esta consulta: "+edadTexto(fn,f)+"  ·  "+fmt(edadMeses(fn,f),1)+" meses"
           : "La edad se calcula sola en cuanto haya fecha de nacimiento.";
-  const kg=pesoKg(b.peso);
-  document.getElementById("m-lbs").textContent = kg
-    ? (state.unidadPeso==="lb"
-        ? `${fmt(parseFloat(b.peso),2)} libras equivalen a ${fmt(kg,3)} kg. El expediente guarda kilogramos.`
-        : `${fmt(kg,2)} kg equivalen a ${fmt(kgToLb(kg),2)} libras.`)
-    : "Escriba en la unidad que le sea cómoda; el expediente siempre guarda kilogramos.";
+  /* La equivalencia siempre a la vista: es la comprobación de que la
+     entrada se interpretó como el clínico quiso. */
+  const kg=pesoKg();
+  const oz=parseFloat(b.pesoOz);
+  document.getElementById("m-lbs").innerHTML = kg
+    ? (lb
+        ? `<b>${parseFloat(b.peso)||0} lb ${oz||0} oz</b> = <b>${fmt(kg,3)} kg</b>. El expediente guarda kilogramos.`
+        : `<b>${fmt(kg,2)} kg</b> = <b>${kgALbOz(kg).lb} lb ${kgALbOz(kg).oz} oz</b>.`)
+    : (lb
+        ? "Libras y onzas por separado: «once tres» son 11 en la primera casilla y 3 en la segunda."
+        : "Escriba en la unidad que le sea cómoda; el expediente siempre guarda kilogramos.");
 
   const av=validarBorrador();
   document.getElementById("m-alerts").innerHTML = av.map(a=>{
@@ -3140,7 +3247,9 @@ function renderTablaMediciones(){
   }
   t.innerHTML=`
     <thead><tr>
-      <th>Fecha</th><th>Edad</th><th>Peso ${state.unidadPeso}</th><th>${state.unidadPeso==="kg"?"lb":"kg"}</th>
+      <th>Fecha</th><th>Edad</th>
+      <th>Peso ${state.unidadPeso==="lb"?"lb + oz":"kg"}</th>
+      <th>${state.unidadPeso==="kg"?"lb + oz":"kg"}</th>
       <th>Talla cm</th><th>PC cm</th>
       <th>P/E</th><th>T/E</th><th>P/T</th><th>PC/E</th><th>MUAC mm</th><th>Edema</th>
       <th>Nota</th><th class="no-print"></th>
@@ -3150,13 +3259,13 @@ function renderTablaMediciones(){
       const r = indicadores(m.peso,m.talla,m.pc,mm,sexo,
                             {muac:m.muac, posicion:m.posicion, edema:m.edema});
       const z = ind => r.z[ind]!=null ? fmtZ(r.z[ind]) : "—";
-      const pri = m.peso!=null ? (state.unidadPeso==="lb"?kgToLb(m.peso):m.peso) : null;
-      const sec = m.peso!=null ? (state.unidadPeso==="lb"?m.peso:kgToLb(m.peso)) : null;
+      const enLb = state.unidadPeso==="lb";
+      const o = m.peso!=null ? kgALbOz(m.peso) : null;
       return `<tr>
         <td>${fmtFecha(m.fecha)}</td>
         <td>${fn?edadTexto(fn,parseISO(m.fecha)):"—"}</td>
-        <td>${pri!=null?fmt(pri,2):"—"}</td>
-        <td style="color:var(--muted)">${sec!=null?fmt(sec,1):"—"}</td>
+        <td>${m.peso==null?"—":(enLb?`${o.lb} lb ${o.oz} oz`:fmt(m.peso,2))}</td>
+        <td style="color:var(--muted)">${m.peso==null?"—":(enLb?fmt(m.peso,2):`${o.lb} lb ${o.oz} oz`)}</td>
         <td>${m.talla?fmt(m.talla,1):"—"}</td>
         <td>${m.pc?fmt(m.pc,1):"—"}</td>
         <td>${z("wfa")}</td><td>${z("lhfa")}</td><td>${z("wfl")}</td><td>${z("hcfa")}</td>
@@ -3802,7 +3911,11 @@ function renderPadres(){
     <div class="pw-sec">Su última medición</div>
     <div class="pw-card">
       <div class="pw-medidas">
-        ${medida(ultima.peso!=null?kgToLb(ultima.peso):null,"lb","Peso",1)}
+        ${(()=>{ if(ultima.peso==null) return medida(null,"lb","Peso",1);
+            const o=kgALbOz(ultima.peso);
+            return `<div class="m">
+              <div class="n">${o.lb}<small> lb </small>${o.oz}<small> oz</small></div>
+              <div class="l">Peso</div></div>`; })()}
         ${medida(ultima.talla,"cm","Estatura",1)}
         ${medida(ultima.pc,"cm","Cabeza",1)}
       </div>
@@ -3951,7 +4064,7 @@ function buildDoc(){
     return `<div class="doc-stat">
       <div class="k">${ind==="wfl"?"Peso para su talla":meta.nom}</div>
       <div class="v">${val?fmt(val,dec):"—"}<small>${ind==="wfl"?"kg":meta.unidad}</small></div>
-      ${(ind==="wfa")&&val?`<div class="k" style="font-weight:600;text-transform:none;letter-spacing:0">${fmt(kgToLb(val),1)} libras</div>`:""}
+      ${(ind==="wfa")&&val?`<div class="k" style="font-weight:600;text-transform:none;letter-spacing:0">${kgALbOz(val).lb} lb ${kgALbOz(val).oz} oz</div>`:""}
       ${(ind==="wfl")&&r.valores.imc?`<div class="k" style="font-weight:600;text-transform:none;letter-spacing:0">IMC ${fmt(r.valores.imc,1)}</div>`:""}
       <div class="i ${tono}">${txt}</div>
     </div>`;
@@ -3984,7 +4097,7 @@ function buildDoc(){
     : `<p class="doc-note">El esquema está completo según el calendario de la clínica.</p>`;
 
   const nac = [
-    p.nPeso?`${fmt(p.nPeso,2)} kg (${fmt(kgToLb(parseFloat(p.nPeso)),1)} lb)`:null,
+    p.nPeso?`${kgALbOz(parseFloat(p.nPeso)).lb} lb ${kgALbOz(parseFloat(p.nPeso)).oz} oz (${fmt(p.nPeso,2)} kg)`:null,
     p.nTalla?`${fmt(p.nTalla,1)} cm`:null,
     p.nPc?`PC ${fmt(p.nPc,1)} cm`:null,
     p.eg?`${p.eg} semanas`:null
@@ -4051,8 +4164,21 @@ document.addEventListener("input", e=>{
     if(el.dataset.input==="fecha") renderVacQuick();
     return; }
   if(el.dataset.pat){
-    state.paciente[el.dataset.pat] = el.dataset.pat==="nPeso"
-      ? (el.value===""?"":String(pesoKg(el.value)??"")) : el.value;
+    state.paciente[el.dataset.pat] = el.value;
+    /* El expediente guarda kilogramos; las casillas de libras y onzas son
+       solo la forma de teclearlos. */
+    if(["nPeso","nPesoLb","nPesoOz"].includes(el.dataset.pat)){
+      if(state.unidadPeso==="lb"){
+        if(el.dataset.pat==="nPeso") state.paciente.nPesoLb = el.value;
+        const k = pesoNacerKg();
+        state.paciente.nPeso = k==null ? "" : String(k);
+      }else{
+        const k = parseFloat(el.value);
+        const o = kgALbOz(k);
+        state.paciente.nPesoLb = isNaN(k)?"":String(o.lb);
+        state.paciente.nPesoOz = isNaN(k)?"":String(o.oz);
+      }
+    }
     Store.savePaciente(state.paciente);
     sincronizarPaciente();
     renderStrip(); renderPacienteForm(); renderAccesos(); renderBorrador(); renderZ(); renderChart();
@@ -4171,17 +4297,31 @@ document.addEventListener("click", e=>{
   else if(a==="unidad"){
     const nueva=b.dataset.u;
     if(nueva!==state.unidadPeso){
-      /* Si ya había un número escrito, se convierte para que no cambie el peso real. */
-      const kg=pesoKg(state.borrador.peso);
+      /* Se convierte lo ya escrito para que el peso real no cambie al
+         cambiar de unidad. */
+      const kg=pesoKg();
+      const kgN=pesoNacerKg();
       state.unidadPeso=nueva;
-      state.borrador.peso = kg==null ? "" : (nueva==="lb"?kgToLb(kg):kg).toFixed(2);
+      if(nueva==="lb"){
+        const o=kgALbOz(kg);
+        state.borrador.peso = kg==null?"":String(o.lb);
+        state.borrador.pesoOz = kg==null?"":String(o.oz);
+        const oN=kgALbOz(kgN);
+        state.paciente.nPesoLb = kgN==null?"":String(oN.lb);
+        state.paciente.nPesoOz = kgN==null?"":String(oN.oz);
+      }else{
+        state.borrador.peso = kg==null?"":kg.toFixed(2);
+        state.borrador.pesoOz = "";
+      }
+      state.paciente.nPeso = kgN==null?"":String(kgN);
       Store.saveMeta({unidadPeso:nueva});
+      Store.savePaciente(state.paciente);
       renderBorrador(); renderPacienteForm(); renderZ(); renderTablaMediciones();
     }
   }
   else if(a==="override"){ state.overrides.add(b.dataset.id); renderBorrador(); }
   else if(a==="guardar-medicion") guardarMedicion();
-  else if(a==="limpiar-medicion"){ state.intentoGuardar=false; state.borrador={fecha:hoyISO(),peso:"",talla:"",pc:"",muac:"",posicion:"auto",edema:false,nota:""}; state.overrides.clear(); renderBorrador(); renderZ(); }
+  else if(a==="limpiar-medicion"){ state.intentoGuardar=false; state.borrador={fecha:hoyISO(),peso:"", pesoOz:"",talla:"",pc:"",muac:"",posicion:"auto",edema:false,nota:""}; state.overrides.clear(); renderBorrador(); renderZ(); }
   else if(a==="borrar-medicion") borrarMedicion(b.dataset.id);
   else if(a==="hito-noaun"){
     if(!puedeEditar()) return;
@@ -5326,7 +5466,7 @@ async function abrirExpediente(id){
     guardarPendientes();
     state.mediciones = e.mediciones.map(documentoAMedicion);
     state.dosis = migrarDosis(e.dosis);
-    state.borrador = {fecha:hoyISO(), peso:"", talla:"", pc:"", muac:"", posicion:"auto", edema:false, nota:""};
+    state.borrador = {fecha:hoyISO(), peso:"", pesoOz:"", talla:"", pc:"", muac:"", posicion:"auto", edema:false, nota:""};
     state.overrides.clear();
     state.tab = "captura";
     state.sinVinculo = null;
@@ -5378,7 +5518,7 @@ function guardarMedicion(){
   state.mediciones.push({
     id:"m"+Date.now().toString(36),
     fecha:b.fecha,
-    peso:pesoKg(b.peso),
+    peso:pesoKg(),
     talla:parseFloat(b.talla)||null,
     pc:parseFloat(b.pc)||null,
     muac:parseFloat(b.muac)||null,
@@ -5394,7 +5534,7 @@ function guardarMedicion(){
   state.pendMediciones.add(nueva.id);
   guardarPendientes(); renderPendientes();
   subirPendientes(true).then(()=>renderPendientes());
-  state.borrador={fecha:hoyISO(),peso:"",talla:"",pc:"",muac:"",posicion:"auto",edema:false,nota:""};
+  state.borrador={fecha:hoyISO(),peso:"", pesoOz:"",talla:"",pc:"",muac:"",posicion:"auto",edema:false,nota:""};
   state.overrides.clear();
   state.intentoGuardar = false;
   render();
