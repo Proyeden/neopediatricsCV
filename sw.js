@@ -10,7 +10,7 @@
    Al publicar una versión nueva del archivo, suba VERSION: eso descarta
    la caché anterior y todos reciben la nueva sin borrar nada a mano.
    ============================================================================ */
-const VERSION = "carne-v2";
+const VERSION = "2026-08-12c";
 const ESENCIALES = [
   "./",
   "./index.html",
