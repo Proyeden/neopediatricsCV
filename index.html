@@ -588,6 +588,16 @@ td.act{width:1%;white-space:nowrap}
 .pw-vac .n{flex:1}
 .pw-vac .f{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
 
+.pw-bloque{
+  font-family:var(--round);font-weight:700;color:var(--np-navy);font-size:var(--f-15);
+  padding-bottom:var(--s2);margin-bottom:var(--s1);border-bottom:2px solid var(--line);
+  display:flex;align-items:baseline;gap:var(--s2);flex-wrap:wrap;
+}
+.pw-bloque span{font-family:var(--sans);font-weight:500;font-size:var(--f-12);color:var(--muted)}
+.pw-vac .prev{font-size:var(--f-12);color:var(--muted);font-weight:400}
+.pw-mas{width:100%;margin-bottom:var(--s2)}
+.pw-menos{display:block;margin:0 auto var(--s2)}
+
 .pw-prox{border-left:5px solid var(--np-orange);background:#FDF6EC;border-color:#F0D3A4}
 .pw-prox .pw-vac{border-bottom-color:#F0D3A4}
 .pw-prox .fecha{font-weight:700;color:var(--np-navy);white-space:nowrap}
@@ -888,6 +898,17 @@ body.lectura .solo-clinico{display:none !important}
 .doc-vac .it .marca{color:#5A6B77;font-weight:400}
 .doc-vac .it .f{color:#5A6B77;font-variant-numeric:tabular-nums;white-space:nowrap}
 .doc-vac .it .tick{color:var(--np-green);font-weight:800}
+
+.doc-bloque{margin-bottom:12px}
+.doc-bloque h3{
+  font-family:var(--round);font-size:12.5px;font-weight:700;color:var(--np-navy);
+  margin:0 0 4px;padding-bottom:3px;border-bottom:1px solid #D4E3EE;
+}
+.doc-next h3{
+  font-family:var(--round);font-size:12.5px;font-weight:700;color:var(--np-navy);margin:0 0 4px;
+}
+.doc-next h3 span{font-family:inherit;font-weight:500;font-size:11px;color:#5A6B77}
+.doc-next + .doc-next{margin-top:8px}
 
 .doc-next{border:1px solid #F0D3A4;border-left:5px solid var(--np-orange);border-radius:12px;padding:12px 15px;background:#FDF6EC}
 .doc-next .it{display:flex;justify-content:space-between;gap:12px;padding:4px 0;font-size:12px}
@@ -1792,7 +1813,7 @@ const DOMINIO_USUARIO = "usuario.neopediatrics.app";
    entre dos aparatos, lo primero que hay que descartar es que uno esté
    corriendo una versión distinta del archivo. Sin este número, eso es
    imposible de saber por teléfono. */
-const VERSION_APP = "2026-08-12c";
+const VERSION_APP = "2026-08-13";
 
 const normalizarUsuario = u => String(u||"").trim().toLowerCase()
   .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
@@ -1946,6 +1967,7 @@ const state = {
   indicesNube:null,
   sinVinculo:null,
   actualizadoEn:"",
+  verVacunas:2,
   autorizadosNube:null,   // lo que Firestore tiene realmente en autorizadosUid
   sincronizando:false,
   pendPaciente:false,
@@ -3370,6 +3392,34 @@ function gruposEsquema(){
   return g.sort((a,b)=> (a.tipo==="extra") - (b.tipo==="extra") || a.m-b.m);
 }
 
+/* Cómo se nombra un bloque del esquema para el encargado.
+   «7 meses» es una casilla del calendario clínico; «A los 7 meses» es una
+   cita en la vida de su hijo. La diferencia es una preposición y cambia
+   quién entiende el documento. */
+function rotuloEncargado(e){
+  if(e.grupo==="extra") return "Otras vacunas";
+  if(e.temporada) return `Vacuna de la temporada ${e.temporada}`;
+  const m = Math.round(e.m);
+  if(m===0) return "Al nacer";
+  if(m<24) return `A los ${m} meses`;
+  const a = m/12;
+  return `A los ${Number.isInteger(a)?a:a.toFixed(1)} años`;
+}
+
+/* Agrupa una lista de dosis por bloque de edad, conservando el orden
+   cronológico y la fecha objetivo de cada bloque. */
+function agruparParaEncargado(items){
+  const g=[];
+  items.forEach(i=>{
+    const clave = i.e.grupo;
+    let b = g.find(x=>x.clave===clave);
+    if(!b){ b={clave, rotulo:rotuloEncargado(i.e), m:i.e.m, objetivo:i.e.objetivo, items:[]}; g.push(b); }
+    b.items.push(i);
+    if(i.e.m < b.m) b.m = i.e.m;
+  });
+  return g.sort((a,b)=> (a.clave==="extra") - (b.clave==="extra") || a.m-b.m);
+}
+
 function rotuloGrupo(b){
   if(b.tipo==="temporada"){
     const primo = b.items.some(i=>i.clase==="primo");
@@ -3946,8 +3996,22 @@ function renderPadres(){
   const items = esquema().map(e=>({e, d:state.dosis[e.id],
                                    st:estadoDosis(e,state.dosis[e.id],hoy)}));
   const aplicadas = items.filter(i=>i.st.k==="ok");
-  const pendientes = items.filter(i=>i.st.k==="late"||i.st.k==="due").slice(0,4);
-  const proxima = items.filter(i=>i.st.k==="wait")[0];
+  /* Las marcadas «No aplica» no son pendientes: mostrarlas mandaría a la
+     madre a pedir una dosis que el médico decidió no poner. */
+  const porVenir = items.filter(i=>i.st.k!=="ok" && i.st.k!=="na");
+
+  /* Agrupadas por edad y limitadas a los bloques más próximos. Ver doce
+     vacunas de golpe abruma; ver «a los 4 meses» y «a los 6 meses» es una
+     agenda. El resto queda a un toque para quien tenga la duda. */
+  const bloquesPorVenir = agruparParaEncargado(porVenir);
+  const visibles  = bloquesPorVenir.slice(0, state.verVacunas);
+  const restantes = bloquesPorVenir.length - visibles.length;
+  const bloquesAplicadas = agruparParaEncargado(aplicadas);
+
+  const filaVac = i => `<div class="pw-vac">
+      <span class="n">${esc(i.e.bio)}${i.e.protege?`<br><span class="prev">Previene ${esc(i.e.protege)}</span>`:""}</span>
+      ${i.st.k==="late"?'<span class="tarde">pendiente</span>':i.st.k==="due"?'<span class="fecha">le toca ahora</span>':""}
+    </div>`;
 
   const hitosLogrados = HITOS.filter(x=>state.hitos[x.id]?.fecha);
 
@@ -3980,35 +4044,34 @@ function renderPadres(){
     <div class="pw-card"><div class="empty">
       <b>Todavía no hay mediciones</b>Aparecerán aquí después de su próxima consulta.</div></div>`}
 
-    ${pendientes.length?`
-    <div class="pw-sec">Vacunas pendientes</div>
-    <div class="pw-card pw-prox">
-      ${pendientes.map(i=>`<div class="pw-vac">
-        <span class="n"><b>${esc(i.e.bio)}</b><br>
-          <span style="color:var(--muted)">${etiquetaDosis(i.e)}</span></span>
-        <span class="${i.st.k==="late"?"tarde":"fecha"}">${
-          i.st.k==="late" ? "pendiente" : "le toca ahora"}</span>
+    ${visibles.length?`
+    <div class="pw-sec">Las vacunas que siguen</div>
+    ${visibles.map(b=>`<div class="pw-card pw-prox">
+        <div class="pw-bloque">${esc(b.rotulo)}${
+          b.objetivo&&b.clave!=="extra"?`<span>· alrededor del ${fmtFecha(b.objetivo)}</span>`:""}</div>
+        ${b.items.map(filaVac).join("")}
       </div>`).join("")}
-      <p class="hint" style="margin:var(--s3) 0 0">
-        Llame a la clínica para agendar. Lleve también el carné del Ministerio de Salud.</p>
-    </div>`:`
+    ${restantes>0?`<button type="button" class="btn btn-ghost btn-sm pw-mas" data-action="ver-mas-vacunas">
+        Ver las siguientes (${restantes} ${restantes===1?"grupo":"grupos"} más)</button>`:""}
+    ${state.verVacunas>2?`<button type="button" class="link pw-menos" data-action="ver-menos-vacunas">Ver menos</button>`:""}
+    <p class="hint" style="margin-top:var(--s2)">
+      Llame a la clínica para agendar. Lleve también el carné del Ministerio de Salud.</p>
+    `:`
     <div class="pw-sec">Vacunas</div>
     <div class="pw-card pw-prox">
       <div class="pw-vac"><span class="t">${ESTRELLA}</span>
-        <span class="n"><b>Está al día con su esquema.</b>${proxima?`<br>
-        <span style="color:var(--muted)">La siguiente es ${esc(proxima.e.bio)}, alrededor del
-        ${proxima.e.objetivo?fmtFecha(proxima.e.objetivo):"—"}.</span>`:""}</span></div>
+        <span class="n"><b>Está al día con su esquema.</b></span></div>
     </div>`}
 
-    ${aplicadas.length?`
-    <div class="pw-sec">Vacunas que ya recibió</div>
-    <div class="pw-card">
-      ${aplicadas.map(i=>`<div class="pw-vac">
-        <span class="t">✓</span>
-        <span class="n">${esc(i.e.bio)}<br>
-          <span style="color:var(--muted)">${etiquetaDosis(i.e)}</span></span>
-        <span class="f">${i.d?.fecha?fmtFecha(i.d.fecha):""}</span></div>`).join("")}
-    </div>`:""}
+    ${bloquesAplicadas.length?`
+    <div class="pw-sec">Las que ya recibió</div>
+    ${bloquesAplicadas.map(b=>`<div class="pw-card">
+        <div class="pw-bloque">${esc(b.rotulo)}</div>
+        ${b.items.map(i=>`<div class="pw-vac">
+          <span class="t">✓</span>
+          <span class="n">${esc(i.e.bio)}${i.d?.origen==="externo"?'<span class="prev"> · documentada en carné</span>':""}</span>
+          <span class="f">${i.d?.fecha?fmtFecha(i.d.fecha):""}</span></div>`).join("")}
+      </div>`).join("")}`:""}
 
     ${hitosLogrados.length?`
     <div class="pw-sec">Sus logros</div>
@@ -4099,8 +4162,6 @@ function hitosDoc(fn){
 function buildDoc(){
   const p=state.paciente, fn=parseISO(p.fn), hoy=parseISO(hoyISO()), s=SEDES[state.sede];
   const ultima = medicionesOrdenadas().slice(-1)[0] || null;
-  const iniciales = (p.nombre.trim().split(/\s+/).slice(0,2).map(w=>w[0]||"").join("")||"—").toUpperCase();
-
   const mm = ultima && fn ? edadMeses(fn,parseISO(ultima.fecha)) : null;
   const r = ultima ? indicadores(ultima.peso,ultima.talla,ultima.pc,mm,p.sexo,
                     {muac:ultima.muac, posicion:ultima.posicion, edema:ultima.edema})
@@ -4122,30 +4183,33 @@ function buildDoc(){
     </div>`;
   }).join("");
 
-  const items = esquema().map(e=>({e, d:state.dosis[e.id],
-                                   st:estadoDosis(e,state.dosis[e.id],hoy)}));
-  const aplicadas = items.filter(i=>i.st.k==="ok");
-  /* Las que el médico marcó «No aplica» no son pendientes: mostrarlas en
-     el carné del encargado lo mandaría a pedir una dosis que se decidió
-     no poner. */
-  const pendientes = items.filter(i=>i.st.k!=="ok" && i.st.k!=="na").slice(0,6);
+  const items = esquema().map(e=>({e, d:state.dosis[e.id], st:estadoDosis(e,state.dosis[e.id],hoy)}));
+  const aplicadas  = items.filter(i=>i.st.k==="ok");
+  const porVenir   = items.filter(i=>i.st.k!=="ok" && i.st.k!=="na");
 
-  const listaAplicadas = aplicadas.length
-    ? `<div class="doc-vac">${aplicadas.map(i=>
-        `<div class="it"><span class="tick">✓</span><span class="n">${esc(i.e.etiqueta)}${
-          i.d?.nombreComercial?`<span class="marca"> · ${esc(i.d.nombreComercial)}</span>`:""}${
-          i.d?.lote?`<span class="marca"> · lote ${esc(i.d.lote)}</span>`:""}${
-          i.d?.origen==="externo"?`<span class="marca"> · documentada en carné</span>`:""}</span>
-         <span class="f">${i.d?.fecha?fmtFecha(i.d.fecha):""}</span></div>`).join("")}</div>`
+  /* Agrupadas por edad, no por número de dosis: «a los 2 meses» le dice a
+     una madre cuándo volver; «1ª, 2ª y 3ª dosis» le dice cuántas van, que
+     es una cuenta que no necesita llevar. */
+  const gAplicadas = agruparParaEncargado(aplicadas);
+  const gPorVenir  = agruparParaEncargado(porVenir).slice(0,3);
+
+  const listaAplicadas = gAplicadas.length
+    ? gAplicadas.map(b=>`<div class="doc-bloque">
+        <h3>${esc(b.rotulo)}</h3>
+        <div class="doc-vac">${b.items.map(i=>`<div class="it">
+          <span class="tick">✓</span>
+          <span class="n">${esc(i.e.bio)}${i.d?.nombreComercial?`<span class="marca"> · ${esc(i.d.nombreComercial)}</span>`:""}${
+            i.d?.origen==="externo"?`<span class="marca"> · documentada en carné</span>`:""}</span>
+          <span class="f">${i.d?.fecha?fmtFecha(i.d.fecha):""}</span></div>`).join("")}</div>
+      </div>`).join("")
     : `<p class="doc-note">Todavía no hay dosis registradas en este expediente.</p>`;
 
-  const listaProximas = pendientes.length
-    ? `<div class="doc-next">${pendientes.map(i=>{
-        const objetivo = i.e.objetivo?fmtFecha(i.e.objetivo):"—";
-        const late = i.st.k==="late";
-        return `<div class="it"><b>${esc(i.e.etiqueta)}</b>
-          <span class="${late?"late":""}">${late?"pendiente desde ":""}${objetivo}</span></div>`;
-      }).join("")}</div>`
+  const listaProximas = gPorVenir.length
+    ? gPorVenir.map(b=>`<div class="doc-next">
+        <h3>${esc(b.rotulo)}${b.objetivo&&b.clave!=="extra"?` <span>alrededor del ${fmtFecha(b.objetivo)}</span>`:""}</h3>
+        ${b.items.map(i=>`<div class="it"><b>${esc(i.e.bio)}</b>
+          <span class="${i.st.k==="late"?"late":""}">${i.st.k==="late"?"pendiente":""}</span></div>`).join("")}
+      </div>`).join("")
     : `<p class="doc-note">El esquema está completo según el calendario de la clínica.</p>`;
 
   const nac = [
@@ -4188,7 +4252,7 @@ function buildDoc(){
 
     ${hitosDoc(fn)}
 
-    <h2 class="sec">Vacunas ya aplicadas</h2>
+    <h2 class="sec">Vacunas que ya recibió</h2>
     ${listaAplicadas}
 
     <h2 class="sec">${ESTRELLA} Lo que sigue</h2>
@@ -4414,6 +4478,8 @@ document.addEventListener("click", e=>{
       prompt("Copie este identificador y envíelo a la clínica:", t);
     }
   }
+  else if(a==="ver-mas-vacunas"){ state.verVacunas += 3; renderPadres(); }
+  else if(a==="ver-menos-vacunas"){ state.verVacunas = 2; renderPadres(); }
   else if(a==="refrescar-padres") refrescarPadres();
   else if(a==="recargar-datos"){ document.getElementById("d-alerts").innerHTML=""; arrancarDatos(); }
   else if(a==="verificar-nube") verificarNube();
