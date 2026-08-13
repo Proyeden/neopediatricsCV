@@ -1792,7 +1792,7 @@ const DOMINIO_USUARIO = "usuario.neopediatrics.app";
    entre dos aparatos, lo primero que hay que descartar es que uno esté
    corriendo una versión distinta del archivo. Sin este número, eso es
    imposible de saber por teléfono. */
-const VERSION_APP = "2026-08-12b";
+const VERSION_APP = "2026-08-12c";
 
 const normalizarUsuario = u => String(u||"").trim().toLowerCase()
   .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
@@ -2252,7 +2252,20 @@ const fmtZ = z => z==null ? "—" : (z>=0?"+":"")+z.toFixed(2);
    se elimina en la entrada, no se resuelve adivinando después. El
    expediente sigue guardando kilogramos, siempre.
    ============================================================ */
-const LB_KG = 0.45359237;
+/* Factor de conversión: se usa 2.2 libras por kilogramo, que es el que
+   se maneja en la clínica y en las tablas de papel.
+
+   El factor exacto es 2.20462, así que este introduce una diferencia
+   sistemática de +0.2 %: unos 10 g en un lactante de 5 kg y unos 40 g en
+   un niño de 20 kg. Es irrelevante para el z-score —desplaza unas 0.02
+   desviaciones estándar, dos centésimas— y a cambio el expediente
+   coincide con lo que el personal calcula a mano y con lo que dice el
+   carné de papel. Esa coincidencia vale más que la segunda cifra decimal.
+
+   Para volver al factor exacto basta poner LB_POR_KG = 2.20462:
+   ida y vuelta siguen cuadrando porque todo se deriva de esta constante. */
+const LB_POR_KG = 2.2;
+const LB_KG = 1/LB_POR_KG;
 const OZ_KG = LB_KG/16;
 
 const kgToLb = kg => kg/LB_KG;
