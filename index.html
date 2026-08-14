@@ -1604,9 +1604,16 @@ const ESQUEMA_BASE = [
   {id:"hepa-2",   m:14, bio:"Hepatitis A",          clase:"primaria", n:2},
 
   {id:"dtap-r1",  m:18, bio:"DTaP + IPV",           clase:"refuerzo", n:1},
+  /* La segunda dosis de SPR va a los 18 meses, como el esquema nacional
+     del MSPAS, y no a los 4 años del calendario estadounidense. Con esto
+     el carné digital coincide con el de papel —que es el que revisan en
+     el puesto de salud y en la inscripción escolar— y el niño queda
+     protegido contra sarampión dos años y medio antes. El identificador
+     del renglón no cambia, así que las dosis ya registradas se conservan. */
+  {id:"spr-2",    m:18, bio:"SPR",                  clase:"primaria", n:2,
+                  nota:"Esquema nacional: segunda dosis a los 18 meses. Si no se aplicó a tiempo, puede administrarse con un intervalo mínimo de un mes desde la primera."},
 
   {id:"dtap-r2",  m:48, bio:"DTaP + IPV",           clase:"refuerzo", n:2},
-  {id:"spr-2",    m:48, bio:"SPR",                  clase:"primaria", n:2},
   {id:"var-2",    m:48, bio:"Varicela",             clase:"primaria", n:2}
 ];
 
@@ -1813,7 +1820,7 @@ const DOMINIO_USUARIO = "usuario.neopediatrics.app";
    entre dos aparatos, lo primero que hay que descartar es que uno esté
    corriendo una versión distinta del archivo. Sin este número, eso es
    imposible de saber por teléfono. */
-const VERSION_APP = "2026-08-13";
+const VERSION_APP = "2026-08-13b";
 
 const normalizarUsuario = u => String(u||"").trim().toLowerCase()
   .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
