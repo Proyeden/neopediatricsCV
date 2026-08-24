@@ -10,14 +10,21 @@
    Al publicar una versión nueva del archivo, suba VERSION: eso descarta
    la caché anterior y todos reciben la nueva sin borrar nada a mano.
    ============================================================================ */
-const VERSION = "2026-08-13b";
+const VERSION = "carne-v3";
 const ESENCIALES = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
-  "./apple-touch-icon.png"
+  "./apple-touch-icon.png",
+
+  /* Los fondos de la cuponera. Son 163 KB en total, una sola vez, y con
+     ellos el cupón se ve aunque no haya señal —que es justo lo que pasa
+     dentro de la clínica, donde la mamá lo va a enseñar. */
+  "./cupon-02m.webp", "./cupon-04m.webp", "./cupon-06m.webp",
+  "./cupon-men.webp", "./cupon-12m.webp", "./cupon-14m.webp",
+  "./cupon-18m.webp", "./cupon-04a.webp", "./cupon-flu.webp"
 ];
 
 self.addEventListener("install", e => {
