@@ -598,6 +598,50 @@ td.act{width:1%;white-space:nowrap}
 .pw-mas{width:100%;margin-bottom:var(--s2)}
 .pw-menos{display:block;margin:0 auto var(--s2)}
 
+/* ---- CUPONERA ----------------------------------------------------
+   El cupón se dimensiona en cqw: porcentaje del ancho del propio cupón,
+   no de la ventana. Así se ve idéntico en un teléfono de 360 px, en el
+   escritorio y en papel, sin un solo punto de quiebre.
+   La ilustración es el fondo; el texto va encima en HTML, porque el
+   nombre y la fecha cambian con cada paciente.                        */
+.cupon{position:relative;width:100%;aspect-ratio:3/2;container-type:inline-size;
+  border-radius:var(--r2);overflow:hidden;margin-bottom:var(--s3);
+  background:#E2F1F7 center/cover no-repeat;box-shadow:0 6px 20px rgba(18,63,115,.14)}
+/* Velo blanco del lado del texto: seguro por si alguna ilustración trae
+   más detalle del esperado en esa zona. */
+.cupon::before{content:"";position:absolute;inset:0;
+  background:linear-gradient(100deg,transparent 32%,rgba(255,255,255,.58) 44%,rgba(255,255,255,.72) 100%)}
+.cupon::after{content:"";position:absolute;left:0;right:0;bottom:0;
+  height:1.1cqw;background:var(--np-orange)}
+.cp-panel{position:absolute;left:41.5%;right:4.5%;top:6%;bottom:7%;
+  display:flex;flex-direction:column}
+.cp-rot{font-size:1.9cqw;font-weight:700;color:#1B7FA8;letter-spacing:.15em;
+  text-transform:uppercase;margin-bottom:.9cqw}
+.cp-cifra{display:flex;align-items:baseline;gap:1.4cqw;line-height:.88}
+.cp-cifra b{font-size:13cqw;font-weight:800;color:var(--np-navy);letter-spacing:-.035em}
+.cp-cifra i{font-size:3.5cqw;font-weight:600;font-style:normal;color:#1B7FA8}
+.cp-vac{font-size:3.7cqw;font-weight:700;color:var(--np-navy);line-height:1.14;margin-top:2cqw}
+.cp-vac.larga{font-size:2.95cqw}
+.cp-prot{font-size:2.05cqw;line-height:1.35;margin-top:.9cqw;color:#4A6173}
+.cp-linea{height:1px;background:rgba(18,63,115,.20);margin:2.2cqw 0 1.7cqw}
+.cp-campos{font-size:2.05cqw;color:var(--np-navy)}
+.cp-campos span{font-weight:600}
+.cp-cond{font-size:1.68cqw;line-height:1.42;margin-top:auto;padding-top:1.7cqw;color:#5A7387}
+.cp-cond b{color:var(--np-navy);font-weight:700}
+.cp-pie{font-size:1.68cqw;margin-top:1cqw;color:var(--np-navy);font-weight:600}
+
+.tbl-cup{width:100%;border-collapse:collapse}
+.tbl-cup td{padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl-cup tr:last-child td{border-bottom:none}
+.tbl-cup tr.apagado{opacity:.55}
+@media (max-width:640px){
+  .tbl-cup,.tbl-cup tbody,.tbl-cup tr,.tbl-cup td{display:block;width:100%}
+  .tbl-cup tr{border-bottom:1px solid var(--line);padding:var(--s2) 0}
+  .tbl-cup td{border:none;padding:2px 0}
+  .tbl-cup td[data-l]:not([data-l=""])::before{content:attr(data-l) ": ";
+    font-size:var(--f-12);color:var(--muted);font-weight:600}
+}
+
 .pw-prox{border-left:5px solid var(--np-orange);background:#FDF6EC;border-color:#F0D3A4}
 .pw-prox .pw-vac{border-bottom-color:#F0D3A4}
 .pw-prox .fecha{font-weight:700;color:var(--np-navy);white-space:nowrap}
@@ -1208,6 +1252,20 @@ body.lectura .solo-clinico{display:none !important}
       </header>
       <div class="tbl-scroll"><table id="tbl-vac"></table></div>
     </div>
+
+    <div class="card">
+      <header>
+        <h2>Cuponera de descuento</h2>
+        <span class="hint" style="margin-left:auto" id="cup-resumen"></span>
+      </header>
+      <div id="cup-lista"></div>
+      <p class="hint">
+        Un cupón de 10% por tanda, sobre la vacuna indicada. <b>No se acumula con el
+        descuento de pago en efectivo.</b> Si la familia no acepta la vacuna nombrada,
+        puede honrarlo sobre otra de la misma visita: eso queda a criterio del personal
+        y no está impreso en el cupón.
+      </p>
+    </div>
   </section>
 
   <!-- ============ PACIENTE ============ -->
@@ -1714,6 +1772,215 @@ const PROTEGE = {
   "DTaP + IPV":          "difteria, tétanos, tos ferina y poliomielitis"
 };
 
+/* ============================================================
+   CUPONERA
+   Un cupón de 10% por tanda de vacunación, sobre una vacuna nombrada.
+
+   Por qué el cupón nombra la vacuna y no dice «la más cara»: el precio
+   depende de la marca que haya en refrigeradora ese día, y una promesa
+   comparativa habría que sostenerla cada vez que cambie el distribuidor.
+   Nombrarla es una promesa que siempre se puede cumplir.
+
+   Las nueve vacunas se repartieron para que no se repitan: el neumococo
+   sale dos veces porque es la más cara de cuatro tandas seguidas, pero
+   con ocho meses de distancia. La diferencia contra asignar siempre la
+   más cara es de unos Q29 en toda la serie.
+
+   NO se acumula con el descuento de pago en efectivo. Decisión de la
+   clínica, no un detalle técnico: si se acumularan, el margen sobre las
+   vacunas caras bajaría más de lo previsto.
+
+   No hay folio impreso. El control de «una sola vez» vive aquí, en el
+   expediente: quien cobra abre el expediente y marca el canje. Un folio
+   en papel se fotocopia; un registro con firma y fecha, no.
+   ============================================================ */
+const CUPON_DESCUENTO = 10;          // por ciento
+const CUPON_ANTES_DIAS = 45;         // aparece 45 días antes de la fecha del esquema
+const CUPON_TRAS_PREVIA_DIAS = 15;   /* o 15 días después de que se aplicó la tanda
+                                        anterior, lo que ocurra después. */
+
+/* Por qué dos condiciones y no solo el calendario: un cupón por calendario
+   se abre aunque el niño venga atrasado, y entonces se le juntan dos o tres
+   a la vez —el de 4 meses seguía vivo cuando ya tocaba el de 6—. Amarrar la
+   apertura a la aplicación real de la tanda anterior los pone en fila: uno
+   a la vez, en orden, siga o no el calendario.
+
+   Y por eso el cupón NO vence por fecha. Mientras la dosis siga pendiente el
+   cupón sigue sirviendo, porque quitarle el descuento al niño atrasado
+   castiga justo a quien más falta hace que vuelva. Se cierra solo cuando la
+   dosis se aplica o se marca «No aplica». La única excepción es influenza:
+   esa sí muere con la temporada, porque el biológico del año se acaba. */
+
+const CUPONES = [
+  {id:"02m", grupo:"edad:2",  dosis:"rota-1",  img:"cupon-02m.webp",
+   rotulo:"Vacunas de los 2 meses",  vacuna:"Vacuna contra el rotavirus",
+   protege:"Protege contra la gastroenteritis grave por rotavirus",
+   ambito:"las vacunas de los 2 meses"},
+
+  {id:"04m", grupo:"edad:4",  dosis:"pcv-2",   img:"cupon-04m.webp",
+   rotulo:"Vacunas de los 4 meses",  vacuna:"Vacuna contra el neumococo",
+   protege:"Protege contra la neumonía y la enfermedad neumocócica",
+   ambito:"las vacunas de los 4 meses"},
+
+  {id:"06m", grupo:"edad:6",  dosis:"hexa-3",  img:"cupon-06m.webp",
+   rotulo:"Vacunas de los 6 meses",  vacuna:"Vacuna hexavalente",
+   protege:"Seis vacunas en una sola aplicación",
+   ambito:"las vacunas de los 6 meses"},
+
+  /* Meningococo: un solo cupón para las dos dosis (7 y 9 meses). Son dos
+     tandas de una sola vacuna, y es la más cara del listado: el 10% se
+     lleva 31% del margen, el peor de todos. Dos cupones seguidos sobre
+     ella serían más de Q300 en tres meses. */
+  {id:"men", grupo:"edad:7",  dosis:"men-1",   img:"cupon-men.webp",
+   rotulo:"Vacunas de los 7 a 9 meses", vacuna:"Vacuna contra el meningococo",
+   protege:"Protege contra la meningitis meningocócica",
+   ambito:"la serie contra el meningococo"},
+
+  {id:"12m", grupo:"edad:12", dosis:"pcv-r",   img:"cupon-12m.webp",
+   rotulo:"Vacunas de los 12 meses", vacuna:"Refuerzo contra el neumococo",
+   protege:"Completa la protección contra la neumonía",
+   ambito:"las vacunas de los 12 meses"},
+
+  {id:"14m", grupo:"edad:14", dosis:"hepa-2",  img:"cupon-14m.webp",
+   rotulo:"Vacunas de los 14 meses", vacuna:"Vacuna contra la hepatitis A",
+   protege:"Protege contra la hepatitis A",
+   ambito:"las vacunas de los 14 meses"},
+
+  {id:"18m", grupo:"edad:18", dosis:"dtap-r1", img:"cupon-18m.webp",
+   rotulo:"Vacunas de los 18 meses",
+   vacuna:"Refuerzo contra difteria, tétanos, tos ferina y polio",
+   protege:"Refuerza la protección que recibió en el primer año",
+   ambito:"las vacunas de los 18 meses"},
+
+  {id:"04a", grupo:"edad:48", dosis:"var-2",   img:"cupon-04a.webp",
+   rotulo:"Vacunas de los 4 años", vacuna:"Vacuna contra la varicela",
+   protege:"Completa la protección contra la varicela",
+   ambito:"las vacunas de los 4 años"}
+];
+
+/* La de influenza no está en la lista de arriba porque no hay una sola:
+   hay una por temporada, y la temporada la decide MES_TEMPORADA, no la
+   edad del niño. Se arma sobre la marcha, igual que las dosis. */
+function cuponInfluenza(e){
+  return {id:"flu-"+e.temporada, grupo:e.grupo, dosis:e.id, img:"cupon-flu.webp",
+          temporada:e.temporada,
+          rotulo:`Temporada de influenza ${e.temporada}`,
+          vacuna:"Vacuna contra la influenza",
+          protege:"Protege contra la influenza de esta temporada",
+          ambito:"la vacuna de influenza de esta temporada"};
+}
+
+/* La última fecha en que se aplicó algo de una tanda, y si a esa tanda le
+   queda algo pendiente. Se mira la tanda entera y no solo la vacuna que
+   nombra el cupón: si los papás rechazaron el rotavirus pero pusieron las
+   otras dos de los 2 meses, la visita ocurrió y el siguiente cupón debe
+   abrir igual. */
+function ultimaAplicacionDeGrupo(items, grupo){
+  const f = items.filter(e=>e.grupo===grupo)
+    .map(e=>state.dosis[e.id])
+    .filter(d=>d && d.fecha && !d.anulada)
+    .map(d=>d.fecha).sort();
+  return f.length ? f[f.length-1] : null;
+}
+function grupoPendiente(items, grupo){
+  return items.some(e=>{
+    if(e.grupo!==grupo || e.omitida) return false;
+    const d = state.dosis[e.id];
+    return !(d && d.fecha && !d.anulada);
+  });
+}
+
+/* Los cupones de ESTE paciente, cada uno con su ventana y su estado.
+   Se arma desde el esquema, no desde una lista paralela: si mañana cambia
+   una fecha objetivo, el cupón se mueve solo. */
+function cuponera(){
+  const hoy   = parseISO(hoyISO());
+  const items = esquema();
+  const salida = [];
+
+  const armar = (def, e, previo) => {
+    if(!e || !e.objetivo) return;
+    const reg      = state.cupones[def.id];
+    const canjeado = reg && !reg.anulado;
+    const d        = state.dosis[e.id];
+    const aplicada = d && d.fecha && !d.anulada;
+
+    /* Apertura: 45 días antes de la fecha del esquema. Si hay tanda
+       anterior, no antes de 15 días después de que esa tanda se aplicó. */
+    let desde = sumarDias(parseISO(e.objetivo), -CUPON_ANTES_DIAS);
+    let espera = false;
+    if(previo){
+      const ult = ultimaAplicacionDeGrupo(items, previo.grupo);
+      if(ult){
+        const tras = sumarDias(parseISO(ult), CUPON_TRAS_PREVIA_DIAS);
+        if(tras > desde) desde = tras;
+      }else if(grupoPendiente(items, previo.grupo)){
+        espera = true;          // la tanda anterior todavía no se ha puesto
+      }
+      // si la tanda anterior quedó entera en «No aplica», manda el calendario
+    }
+
+    /* Influenza muere con la temporada; las de edad no vencen. */
+    const hasta = def.temporada ? toISO(new Date(def.temporada+1, 2, 31)) : "";
+
+    let k;
+    if(canjeado)                     k = "canjeado";
+    else if(aplicada)                k = "usada";      // la dosis se puso sin cupón
+    else if(e.omitida)               k = "na";
+    else if(espera)                  k = "espera";
+    else if(hasta && toISO(hoy)>hasta) k = "vencido";
+    else if(hoy < desde)             k = "futuro";
+    else                             k = "vigente";
+
+    salida.push({...def, dosisId:e.id, objetivo:e.objetivo,
+                 desde:toISO(desde), hasta, estado:k, registro:reg||null});
+  };
+
+  CUPONES.forEach((def,i) => armar(def, items.find(x=>x.id===def.dosis),
+                                   i>0 ? CUPONES[i-1] : null));
+  items.filter(e=>e.bio==="Influenza" && (e.clase==="anual" || e.n===1))
+       .forEach(e => armar(cuponInfluenza(e), e, null));
+
+  return salida.sort((a,b)=> (a.objetivo||"").localeCompare(b.objetivo||""));
+}
+
+/* Los vigentes, con las de edad primero. Influenza corre por temporada y
+   no por edad, así que puede solaparse con la tanda que toca; si hay las
+   dos, manda la de edad, que es la que trae a la familia a la consulta. */
+function cuponesVigentes(){
+  const v = cuponera().filter(c=>c.estado==="vigente");
+  const edad = v.filter(c=>!c.temporada);
+  return edad.length ? [...edad, ...v.filter(c=>c.temporada)] : v;
+}
+
+/* Canjear no borra ni sobrescribe: deja quién, cuándo y sobre qué dosis.
+   Deshacer tampoco borra —marca 'anulado'—, porque un canje revertido es
+   un movimiento que alguien debe poder auditar después. */
+function canjearCupon(id){
+  if(!puedeEditar()) return;
+  const c = cuponera().find(x=>x.id===id);
+  if(!c) return;
+
+  const previo = state.cupones[id];
+  if(previo && !previo.anulado){
+    if(!confirm(`¿Deshacer el canje de «${c.vacuna}»?\n\n` +
+                `Se canjeó el ${fmtFecha(previo.canjeadoEn)} por ${previo.por||"—"}.\n` +
+                `Queda constancia de que se deshizo; no se borra nada.`)) return;
+    state.cupones[id] = {...previo, anulado:true,
+                         anuladoPor: state.sesion?.email || "", anuladoEn: hoyISO()};
+  }else{
+    if(!confirm(`Canjear el cupón de ${CUPON_DESCUENTO}% sobre «${c.vacuna}».\n\n` +
+                `Recuerde: no se acumula con el descuento de pago en efectivo.`)) return;
+    state.cupones[id] = {canjeadoEn: hoyISO(), por: state.sesion?.email || "",
+                         dosis: c.dosisId, vacuna: c.vacuna, descuento: CUPON_DESCUENTO};
+  }
+
+  Store.saveMeta({cupones:state.cupones});
+  state.pendPaciente = true; guardarPendientes();
+  subirPendientes(true).then(()=>{ renderPendientes(); });
+  renderCupones(); renderTabBadge();
+}
+
 const ORDINAL = ["", "1ª", "2ª", "3ª", "4ª", "5ª"];
 
 function etiquetaDosis(e){
@@ -1990,6 +2257,7 @@ const state = {
   mediciones:[],   // {id, fecha, peso, talla, pc, nota, capturadoEn}
   dosis:{},        // id del renglón del esquema -> registro completo de la dosis
   hitos:{},        // id del hito -> {fecha, nota}
+  cupones:{},      // id del cupón -> {canjeadoEn, por, dosis, vacuna, descuento}
   omisiones:{},    // id del renglón -> {motivo, por, fecha} — dosis que no aplican a este niño
   borrador:{fecha:hoyISO(), peso:"", pesoOz:"", talla:"", pc:"", muac:"", posicion:"auto", edema:false, nota:""},
   intentoGuardar:false,
@@ -2102,6 +2370,11 @@ function edadTexto(fn,ref){
 /** Edad en meses decimales, base para interpolar las tablas LMS. */
 function edadMeses(fn,ref){ return diasEntre(fn,ref)/30.4375; }
 
+function sumarDias(fecha,dias){
+  const d=new Date(fecha.getTime());
+  d.setDate(d.getDate()+dias);
+  return d;
+}
 function sumarMeses(fecha,meses){
   const d=new Date(fecha.getTime());
   const dia=d.getDate();
@@ -2790,6 +3063,7 @@ function pacienteADocumento(p, sesionMail){
     telefono: p.tel,
     hitos: state.hitos,
     omisiones: state.omisiones,
+    cupones: state.cupones,
     accesosDetalle: state.accesos,
     sede: state.sede,
     estado: "activo",
@@ -2915,6 +3189,7 @@ function render(){
   renderVelocidad();
   renderVacQuick();
   renderVacunas();
+  renderCupones();
   renderTabBadge();
   renderPrintFoot();
 }
@@ -3434,6 +3709,59 @@ function rotuloGrupo(b){
   }
   if(b.tipo==="extra") return "Fuera del esquema";
   return etiquetaEdad(b.m);
+}
+
+/* La cuponera del lado clínico. Muestra los nueve con su estado, y deja
+   canjear solo los vigentes. Los vencidos y los futuros se ven igual,
+   apagados: quien cobra necesita saber que existen y por qué no aplican
+   todavía, no que desaparezcan sin explicación. */
+const CUP_ESTADO = {
+  vigente:  {t:"Vigente",            c:"ok"},
+  canjeado: {t:"Canjeado",           c:"na"},
+  futuro:   {t:"Aún no aparece",     c:"wait"},
+  vencido:  {t:"Temporada cerrada", c:"late"},
+  espera:   {t:"Falta la tanda anterior", c:"wait"},
+  usada:    {t:"La dosis ya se puso",c:"na"},
+  na:       {t:"No aplica",          c:"na"}
+};
+
+function renderCupones(){
+  const host = document.getElementById("cup-lista");
+  if(!host) return;
+  const res = document.getElementById("cup-resumen");
+
+  if(!hayExpediente() || !state.paciente.fn){
+    host.innerHTML = `<div class="empty"><b>Sin fecha de nacimiento</b>
+      Los cupones se calculan a partir del esquema de este niño.</div>`;
+    if(res) res.textContent = "";
+    return;
+  }
+
+  const cs = cuponera();
+  const vig = cs.filter(c=>c.estado==="vigente").length;
+  const canj = cs.filter(c=>c.estado==="canjeado").length;
+  if(res) res.textContent = `${vig} vigente${vig===1?"":"s"} · ${canj} canjeado${canj===1?"":"s"}`;
+
+  host.innerHTML = `<table class="tbl-cup"><tbody>${cs.map(c=>{
+    const st = CUP_ESTADO[c.estado] || CUP_ESTADO.na;
+    const r  = c.registro;
+    return `<tr class="${c.estado==="vigente"?"":"apagado"}">
+      <td data-l="Tanda"><b>${esc(c.rotulo)}</b>
+        <div class="hint">${esc(c.vacuna)}</div></td>
+      <td data-l="Ventana">${fmtFecha(c.desde)} — ${fmtFecha(c.hasta)}</td>
+      <td data-l="Estado"><span class="pill ${st.c}">${st.t}</span>
+        ${r&&!r.anulado?`<div class="hint">${fmtFecha(r.canjeadoEn)} · ${esc(r.por||"—")}</div>`:""}
+        ${r&&r.anulado?`<div class="hint">deshecho el ${fmtFecha(r.anuladoEn)}</div>`:""}</td>
+      <td data-l="">${
+        c.estado==="vigente"
+          ? `<button type="button" class="btn btn-primary btn-sm solo-clinico"
+               data-action="cupon" data-id="${esc(c.id)}">Canjear</button>`
+        : c.estado==="canjeado"
+          ? `<button type="button" class="link solo-clinico"
+               data-action="cupon" data-id="${esc(c.id)}">Deshacer</button>`
+        : ""}</td>
+    </tr>`;
+  }).join("")}</tbody></table>`;
 }
 
 function renderVacunas(){
@@ -4051,6 +4379,32 @@ function renderPadres(){
     <div class="pw-card"><div class="empty">
       <b>Todavía no hay mediciones</b>Aparecerán aquí después de su próxima consulta.</div></div>`}
 
+    ${(()=>{
+      /* Las ventanas de tres meses se traslapan: a los 6 meses puede haber
+         tres cupones vigentes a la vez. Al encargado se le muestra uno solo
+         —el de la tanda más próxima—, porque tres cupones en pantalla
+         invitan a preguntar si se pueden usar los tres el mismo día. Los
+         demás siguen vigentes y el personal los ve completos en la clínica. */
+      const cs = cuponesVigentes().slice(0,1);
+      if(!cs.length) return "";
+      return `<div class="pw-sec">Su cupón de descuento</div>
+      ${cs.map(c=>`<div class="cupon" style="background-image:url('${c.img}')">
+        <div class="cp-panel">
+          <div class="cp-rot">${esc(c.rotulo)}</div>
+          <div class="cp-cifra"><b>${CUPON_DESCUENTO}%</b><i>de descuento</i></div>
+          <div class="cp-vac${c.vacuna.length>34?" larga":""}">${esc(c.vacuna)}</div>
+          <div class="cp-prot">${esc(c.protege)}</div>
+          <div class="cp-linea"></div>
+          <div class="cp-campos"><span>Para</span> ${esc(p.nombre.split(/\s+/).slice(0,2).join(" "))}
+            &nbsp;·&nbsp; <span>Válido hasta</span> ${fmtFecha(c.hasta)}</div>
+          <div class="cp-cond">Este cupón es <b>válido una sola vez</b> y únicamente para
+            ${esc(c.ambito)}. No puede usarse en otra visita ni junto con otro cupón.</div>
+          <div class="cp-pie">${esc(SEDES[state.sede].nombre)} · ${esc(SEDES[state.sede].tel)}</div>
+        </div></div>`).join("")}
+      <p class="hint" style="margin-top:var(--s2)">
+        Muéstrelo en la clínica el día de la vacuna. No hace falta imprimirlo.</p>`;
+    })()}
+
     ${visibles.length?`
     <div class="pw-sec">Las vacunas que siguen</div>
     ${visibles.map(b=>`<div class="pw-card pw-prox">
@@ -4326,7 +4680,7 @@ document.addEventListener("input", e=>{
       {[el.dataset.dosis]:el.value, registradoPor:state.sesion?.email||""});
     Store.saveDosis(state.dosis);
     clearTimeout(window.__vacT);
-    window.__vacT=setTimeout(()=>{ const a=document.activeElement; renderVacunas(); renderVacQuick(); renderTabBadge();
+    window.__vacT=setTimeout(()=>{ const a=document.activeElement; renderVacunas(); renderVacQuick(); renderCupones(); renderTabBadge();
       if(a?.dataset?.key){ const n=document.querySelector(`[data-key="${a.dataset.key}"][data-dosis="${a.dataset.dosis}"]`); n?.focus(); } },600);
   }
 });
@@ -4524,6 +4878,7 @@ document.addEventListener("click", e=>{
   else if(a==="pac-nuevo") nuevoPaciente();
   else if(a==="dosis-abrir") abrirDosis(b.dataset.key);
   else if(a==="omitir") omitir(b.dataset.id);
+  else if(a==="cupon") canjearCupon(b.dataset.id);
   else if(a==="dosis-extra") nuevaDosisExtra();
   else if(a==="dosis-cerrar") cerrarDosis();
   else if(a==="dosis-borrar") quitarDosis();
@@ -5163,7 +5518,7 @@ function omitir(id){
   Store.saveMeta({omisiones:state.omisiones});
   state.pendPaciente=true; guardarPendientes();
   subirPendientes(true).then(()=>{ renderPendientes(); });
-  renderVacunas(); renderVacQuick(); renderTabBadge();
+  renderVacunas(); renderVacQuick(); renderCupones(); renderTabBadge();
 }
 
 /* Vacuna fuera del esquema: fiebre amarilla antes de un viaje, rabia tras
@@ -5302,7 +5657,7 @@ function guardarDosis(){
   guardarPendientes(); renderPendientes();
   subirPendientes(true).then(()=>renderPendientes());
   cerrarDosis();
-  renderVacunas(); renderVacQuick(); renderTabBadge();
+  renderVacunas(); renderVacQuick(); renderCupones(); renderTabBadge();
 }
 
 function quitarDosis(){
@@ -5321,7 +5676,7 @@ function quitarDosis(){
   delete state.dosis[key];
   Store.saveDosis(state.dosis);
   cerrarDosis();
-  renderVacunas(); renderVacQuick(); renderTabBadge();
+  renderVacunas(); renderVacQuick(); renderCupones(); renderTabBadge();
 }
 
 /* ============================================================
@@ -5531,7 +5886,7 @@ async function arrancarDatos(){
      realidad estaba viendo la ficha de otro paciente. */
   if(!clinico && state.pacienteId){
     state.pacienteId=null; state.paciente=blankPaciente();
-    state.mediciones=[]; state.dosis={}; state.hitos={}; state.omisiones={};
+    state.mediciones=[]; state.dosis={}; state.hitos={}; state.omisiones={}; state.cupones={};
     state.accesos=[]; state.conteoNube=null;
     state.pendPaciente=false; state.pendMediciones.clear(); state.pendDosis.clear();
     Store.clearAll();
@@ -5627,6 +5982,7 @@ async function abrirExpediente(id){
     state.paciente = Object.assign(blankPaciente(), documentoAPaciente(e.paciente));
     state.hitos = e.paciente.hitos || {};
     state.omisiones = e.paciente.omisiones || {};
+    state.cupones = e.paciente.cupones || {};
     state.accesos = e.paciente.accesosDetalle || [];
     state.pendPaciente=false; state.pendMediciones.clear(); state.pendDosis.clear();
     state.pendIndices.clear();
@@ -5810,6 +6166,7 @@ function nuevoPaciente(){
   state.dosis={};
   state.hitos={};
   state.omisiones={};
+  state.cupones={};
   state.accesos=[];
   state.pendPaciente=false; state.pendMediciones.clear(); state.pendDosis.clear();
   state.pendIndices.clear(); state.conteoNube=null; guardarPendientes();
@@ -5890,7 +6247,8 @@ const Store = (()=>{
     saveMeta: m=>parche(m),
     saveAll: s=>escribir(Object.assign({}, leer()||{},
       {sede:s.sede,paciente:s.paciente,mediciones:s.mediciones,dosis:s.dosis,
-       hitos:s.hitos,omisiones:s.omisiones,accesos:s.accesos,pacienteId:s.pacienteId})),
+       hitos:s.hitos,omisiones:s.omisiones,cupones:s.cupones,
+       accesos:s.accesos,pacienteId:s.pacienteId})),
     clearAll: ()=>{ mem=null; if(disponible) try{ localStorage.removeItem(K); }catch(e){} }
   };
 })();
@@ -6019,6 +6377,7 @@ function mostrarActualizacion(nuevo){
     if(saved.dosis) state.dosis=migrarDosis(saved.dosis);
     if(saved.hitos) state.hitos=saved.hitos;
     if(saved.omisiones) state.omisiones=saved.omisiones;
+    if(saved.cupones) state.cupones=saved.cupones;
     if(saved.accesos) state.accesos=saved.accesos;
     if(saved.pend){
       state.pendPaciente = !!saved.pend.p;
