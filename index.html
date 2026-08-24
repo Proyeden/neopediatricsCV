@@ -624,8 +624,13 @@ td.act{width:1%;white-space:nowrap}
 .cp-vac.larga{font-size:2.95cqw}
 .cp-prot{font-size:2.05cqw;line-height:1.35;margin-top:.9cqw;color:#4A6173}
 .cp-linea{height:1px;background:rgba(18,63,115,.20);margin:2.2cqw 0 1.7cqw}
-.cp-campos{font-size:2.05cqw;color:var(--np-navy)}
-.cp-campos span{font-weight:600}
+.cp-etq{font-size:1.75cqw;color:#5A7387;font-weight:600;
+  letter-spacing:.06em;text-transform:uppercase}
+.cp-para{margin-bottom:.7cqw}
+/* El nombre es lo que convierte un volante en «mi cupón». Va grande. */
+.cp-nombre{display:block;font-size:3.4cqw;font-weight:700;color:var(--np-navy);
+  line-height:1.1;margin-top:.35cqw}
+.cp-vence{font-size:2.05cqw;color:var(--np-navy);font-weight:600}
 .cp-cond{font-size:1.68cqw;line-height:1.42;margin-top:auto;padding-top:1.7cqw;color:#5A7387}
 .cp-cond b{color:var(--np-navy);font-weight:700}
 .cp-pie{font-size:1.68cqw;margin-top:1cqw;color:var(--np-navy);font-weight:600}
@@ -1263,7 +1268,10 @@ body.lectura .solo-clinico{display:none !important}
         Un cupón de 10% por tanda, sobre la vacuna indicada. <b>No se acumula con el
         descuento de pago en efectivo.</b> Si la familia no acepta la vacuna nombrada,
         puede honrarlo sobre otra de la misma visita: eso queda a criterio del personal
-        y no está impreso en el cupón.
+        y no está impreso en el cupón.<br>
+        Cada cupón vive cuatro meses desde que aparece. Al encargado se le muestran
+        hasta tres a la vez, pero <b>solo se canjea uno por visita</b>. Al registrar las
+        dosis del carné del MSPAS, los cupones que ya no corresponden se apagan solos.
       </p>
     </div>
   </section>
@@ -1796,20 +1804,26 @@ const PROTEGE = {
    ============================================================ */
 const CUPON_DESCUENTO = 10;          // por ciento
 const CUPON_ANTES_DIAS = 45;         // aparece 45 días antes de la fecha del esquema
-const CUPON_TRAS_PREVIA_DIAS = 15;   /* o 15 días después de que se aplicó la tanda
-                                        anterior, lo que ocurra después. */
+const CUPON_TRAS_PREVIA_DIAS = 15;   // o 15 días después de la tanda anterior
+const CUPON_VIGENCIA_MESES = 4;      // y vive cuatro meses desde que apareció
+const CUPON_MAX_VISIBLES = 3;        // cuántos se le muestran a la vez al encargado
 
-/* Por qué dos condiciones y no solo el calendario: un cupón por calendario
-   se abre aunque el niño venga atrasado, y entonces se le juntan dos o tres
-   a la vez —el de 4 meses seguía vivo cuando ya tocaba el de 6—. Amarrar la
-   apertura a la aplicación real de la tanda anterior los pone en fila: uno
-   a la vez, en orden, siga o no el calendario.
+/* Por qué la apertura tiene dos condiciones: por calendario sola, al niño
+   atrasado se le abrían tres cupones de golpe. Anclarla también a la
+   aplicación real de la tanda anterior los espacia quince días, que es lo
+   que tarda una familia en volver.
 
-   Y por eso el cupón NO vence por fecha. Mientras la dosis siga pendiente el
-   cupón sigue sirviendo, porque quitarle el descuento al niño atrasado
-   castiga justo a quien más falta hace que vuelva. Se cierra solo cuando la
-   dosis se aplica o se marca «No aplica». La única excepción es influenza:
-   esa sí muere con la temporada, porque el biológico del año se acaba. */
+   Por qué NO se bloquea el cupón cuando la tanda anterior sigue pendiente:
+   muchas familias vacunan en el puesto del MSPAS y vuelven con el carné de
+   papel. Si al niño atrasado se le cierran los cupones siguientes, se le
+   quita justamente el motivo para traer las que faltan aquí. Los cupones
+   se van abriendo en orden cronológico y caducan solos a los cuatro meses;
+   cuando el carné se coteja y las dosis se registran, los que ya no
+   corresponden desaparecen sin que nadie los tenga que apagar a mano.
+
+   Se acumulan hasta tres. Más que eso deja de ser un beneficio y parece
+   una liquidación. Y se canjea UNO POR VISITA: el cupón lo dice y el
+   personal lo aplica. */
 
 const CUPONES = [
   {id:"02m", grupo:"edad:2",  dosis:"rota-1",  img:"cupon-02m.webp",
@@ -1882,13 +1896,6 @@ function ultimaAplicacionDeGrupo(items, grupo){
     .map(d=>d.fecha).sort();
   return f.length ? f[f.length-1] : null;
 }
-function grupoPendiente(items, grupo){
-  return items.some(e=>{
-    if(e.grupo!==grupo || e.omitida) return false;
-    const d = state.dosis[e.id];
-    return !(d && d.fecha && !d.anulada);
-  });
-}
 
 /* Los cupones de ESTE paciente, cada uno con su ventana y su estado.
    Se arma desde el esquema, no desde una lista paralela: si mañana cambia
@@ -1905,32 +1912,35 @@ function cuponera(){
     const d        = state.dosis[e.id];
     const aplicada = d && d.fecha && !d.anulada;
 
-    /* Apertura: 45 días antes de la fecha del esquema. Si hay tanda
-       anterior, no antes de 15 días después de que esa tanda se aplicó. */
+    /* Apertura: 45 días antes de la fecha del esquema; si la tanda anterior
+       ya se aplicó, no antes de 15 días después de esa aplicación. Si la
+       tanda anterior sigue pendiente no se bloquea nada: manda el
+       calendario y el cupón se abre igual. */
     let desde = sumarDias(parseISO(e.objetivo), -CUPON_ANTES_DIAS);
-    let espera = false;
     if(previo){
       const ult = ultimaAplicacionDeGrupo(items, previo.grupo);
       if(ult){
         const tras = sumarDias(parseISO(ult), CUPON_TRAS_PREVIA_DIAS);
         if(tras > desde) desde = tras;
-      }else if(grupoPendiente(items, previo.grupo)){
-        espera = true;          // la tanda anterior todavía no se ha puesto
       }
-      // si la tanda anterior quedó entera en «No aplica», manda el calendario
     }
 
-    /* Influenza muere con la temporada; las de edad no vencen. */
-    const hasta = def.temporada ? toISO(new Date(def.temporada+1, 2, 31)) : "";
+    /* Vence a los cuatro meses de haber aparecido. La de influenza, además,
+       nunca sobrevive a su temporada: el biológico del año se acaba. */
+    let hasta = toISO(sumarMeses(desde, CUPON_VIGENCIA_MESES));
+    if(def.temporada){
+      const cierre = toISO(new Date(def.temporada+1, 2, 31));
+      if(cierre < hasta) hasta = cierre;
+    }
 
+    const h = toISO(hoy);
     let k;
-    if(canjeado)                     k = "canjeado";
-    else if(aplicada)                k = "usada";      // la dosis se puso sin cupón
-    else if(e.omitida)               k = "na";
-    else if(espera)                  k = "espera";
-    else if(hasta && toISO(hoy)>hasta) k = "vencido";
-    else if(hoy < desde)             k = "futuro";
-    else                             k = "vigente";
+    if(canjeado)             k = "canjeado";
+    else if(aplicada)        k = "usada";      // la dosis se puso sin cupón
+    else if(e.omitida)       k = "na";
+    else if(h < toISO(desde))k = "futuro";
+    else if(h > hasta)       k = "vencido";
+    else                     k = "vigente";
 
     salida.push({...def, dosisId:e.id, objetivo:e.objetivo,
                  desde:toISO(desde), hasta, estado:k, registro:reg||null});
@@ -3720,7 +3730,6 @@ const CUP_ESTADO = {
   canjeado: {t:"Canjeado",           c:"na"},
   futuro:   {t:"Aún no aparece",     c:"wait"},
   vencido:  {t:"Temporada cerrada", c:"late"},
-  espera:   {t:"Falta la tanda anterior", c:"wait"},
   usada:    {t:"La dosis ya se puso",c:"na"},
   na:       {t:"No aplica",          c:"na"}
 };
@@ -4380,14 +4389,15 @@ function renderPadres(){
       <b>Todavía no hay mediciones</b>Aparecerán aquí después de su próxima consulta.</div></div>`}
 
     ${(()=>{
-      /* Las ventanas de tres meses se traslapan: a los 6 meses puede haber
-         tres cupones vigentes a la vez. Al encargado se le muestra uno solo
-         —el de la tanda más próxima—, porque tres cupones en pantalla
-         invitan a preguntar si se pueden usar los tres el mismo día. Los
-         demás siguen vigentes y el personal los ve completos en la clínica. */
-      const cs = cuponesVigentes().slice(0,1);
+      /* Hasta tres, en orden cronológico. El niño atrasado ve los que se le
+         fueron acumulando —es lo que lo motiva a ponerse al día aquí y no
+         solo en el puesto de salud—, pero solo puede canjear uno por visita
+         y el cupón lo dice. */
+      const cs = cuponesVigentes().slice(0, CUPON_MAX_VISIBLES);
       if(!cs.length) return "";
-      return `<div class="pw-sec">Su cupón de descuento</div>
+      const varios = cs.length > 1;
+      const nombre = p.nombre.split(/\s+/).slice(0,2).join(" ");
+      return `<div class="pw-sec">${varios?`Sus ${cs.length} cupones de descuento`:"Su cupón de descuento"}</div>
       ${cs.map(c=>`<div class="cupon" style="background-image:url('${c.img}')">
         <div class="cp-panel">
           <div class="cp-rot">${esc(c.rotulo)}</div>
@@ -4395,14 +4405,18 @@ function renderPadres(){
           <div class="cp-vac${c.vacuna.length>34?" larga":""}">${esc(c.vacuna)}</div>
           <div class="cp-prot">${esc(c.protege)}</div>
           <div class="cp-linea"></div>
-          <div class="cp-campos"><span>Para</span> ${esc(p.nombre.split(/\s+/).slice(0,2).join(" "))}
-            &nbsp;·&nbsp; <span>Válido hasta</span> ${fmtFecha(c.hasta)}</div>
+          <div class="cp-para"><span class="cp-etq">Para</span>
+            <span class="cp-nombre">${esc(nombre)}</span></div>
+          <div class="cp-vence"><span class="cp-etq">Válido hasta</span> ${fmtFecha(c.hasta)}</div>
           <div class="cp-cond">Este cupón es <b>válido una sola vez</b> y únicamente para
-            ${esc(c.ambito)}. No puede usarse en otra visita ni junto con otro cupón.</div>
+            ${esc(c.ambito)}.${varios?" <b>Solo puede usar un cupón por visita.</b>":
+            " No puede usarse en otra visita ni junto con otro cupón."}</div>
           <div class="cp-pie">${esc(SEDES[state.sede].nombre)} · ${esc(SEDES[state.sede].tel)}</div>
         </div></div>`).join("")}
       <p class="hint" style="margin-top:var(--s2)">
-        Muéstrelo en la clínica el día de la vacuna. No hace falta imprimirlo.</p>`;
+        ${varios
+          ? "Muéstrelos en la clínica el día de la vacuna. Se aplica un cupón por visita; los demás siguen sirviendo para las próximas."
+          : "Muéstrelo en la clínica el día de la vacuna. No hace falta imprimirlo."}</p>`;
     })()}
 
     ${visibles.length?`
