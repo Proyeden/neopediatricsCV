@@ -2097,7 +2097,7 @@ const DOMINIO_USUARIO = "usuario.neopediatrics.app";
    entre dos aparatos, lo primero que hay que descartar es que uno esté
    corriendo una versión distinta del archivo. Sin este número, eso es
    imposible de saber por teléfono. */
-const VERSION_APP = "2026-08-13b";
+const VERSION_APP = "2026-10-04";
 
 const normalizarUsuario = u => String(u||"").trim().toLowerCase()
   .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
@@ -2380,6 +2380,83 @@ function edadTexto(fn,ref){
 /** Edad en meses decimales, base para interpolar las tablas LMS. */
 function edadMeses(fn,ref){ return diasEntre(fn,ref)/30.4375; }
 
+/* ============================================================
+   PREMATUROS — dos edades que NO son intercambiables
+   ------------------------------------------------------------
+   Las VACUNAS van por edad cronológica, también en el prematuro.
+   El bebé de 32 semanas recibe su hexavalente a los 2 meses de
+   nacido, no a los 2 meses corregidos: corregir la edad vacunal
+   lo dejaría sin protección justo en el periodo en que ya perdió
+   los anticuerpos maternos y más vulnerable está. Por eso
+   edadMeses() se queda intacta y el esquema la sigue usando.
+
+   El CRECIMIENTO y el DESARROLLO sí se corrigen. Si no, el
+   prematuro aparenta estar creciendo mal y se termina estudiando
+   un problema que no existe — o peor, se le sobrealimenta.
+   Todo lo que toca curvas, z-scores, velocidad e hitos pasa por
+   edadCrec().
+
+   Y antes de las 50 semanas de edad posmenstrual no se grafica
+   nada: ese tramo no es de la OMS sino de Fenton, y la app lo
+   dice en voz alta en vez de dibujar un z-score equivocado.
+   ============================================================ */
+const CORRECCION_FIN_MESES = 24;  /* La AAP recomienda corregir hasta los
+                                     24 meses de edad corregida. Hay trabajo
+                                     reciente que sugiere llegar a 36; si se
+                                     cambia este número, cambia todo el
+                                     comportamiento de una sola vez. */
+const PMA_WHO_SEMANAS = 50;       // antes de esto, la curva de la OMS no aplica
+const EG_TERMINO = 37;            // por debajo de 37 semanas: pretérmino
+
+/** Semanas que le faltaron para llegar a término. 0 si nació a término. */
+function semanasPrematuro(){
+  const eg = parseFloat(state.paciente && state.paciente.eg);
+  return (eg && eg >= 22 && eg < EG_TERMINO) ? (40 - eg) : 0;
+}
+const esPretermino = () => semanasPrematuro() > 0;
+
+/** Edad posmenstrual en semanas: gestación al nacer + tiempo transcurrido. */
+function pmaSemanas(fn, ref){
+  const eg = parseFloat(state.paciente && state.paciente.eg);
+  if(!eg || !fn || !ref) return null;
+  return eg + diasEntre(fn, ref)/7;
+}
+
+/** Edad corregida en meses. Sin prematuridad devuelve la cronológica.
+    Puede salir NEGATIVA si el niño todavía no llega a su fecha probable
+    de parto, y así debe ser: indicadores() descarta meses<0 y entonces no
+    se calcula ningún z-score, que es exactamente lo correcto. El patrón de
+    la OMS empieza en el término; antes de eso no hay nada que graficar. */
+function edadCorregidaMeses(fn, ref){
+  const s = semanasPrematuro();
+  const m = edadMeses(fn, ref);
+  return s ? m - s*7/30.4375 : m;
+}
+
+/** La edad que deben usar curvas, z-scores, velocidad e hitos.
+    Se corrige hasta los 24 meses corregidos; pasado ese punto la
+    diferencia deja de ser relevante y se vuelve a la cronológica. */
+function edadCrec(fn, ref){
+  if(!semanasPrematuro()) return edadMeses(fn, ref);
+  const c = edadCorregidaMeses(fn, ref);
+  return c < CORRECCION_FIN_MESES ? c : edadMeses(fn, ref);
+}
+
+/** ¿Se está corrigiendo la edad en esta fecha? Para rotular la pantalla. */
+function corrigiendoEn(fn, ref){
+  return semanasPrematuro() > 0 &&
+         edadCorregidaMeses(fn, ref) < CORRECCION_FIN_MESES;
+}
+
+/** Texto corto de edad corregida, para mostrar junto a la cronológica. */
+function textoCorregida(fn, ref){
+  if(!corrigiendoEn(fn, ref)) return "";
+  const dias = Math.round(diasEntre(fn, ref) - semanasPrematuro()*7);
+  if(dias < 0) return "aún no llega a su fecha probable de parto";
+  const d = new Date(fn.getTime()); d.setDate(d.getDate() + semanasPrematuro()*7);
+  return edadTexto(d, ref) + " corregida";
+}
+
 function sumarDias(fecha,dias){
   const d=new Date(fecha.getTime());
   d.setDate(d.getDate()+dias);
@@ -2527,8 +2604,102 @@ function clasificarMuac(mm, meses){
 }
 
 /* Un solo lugar calcula los indicadores de una medición. */
+/* ============================================================
+   INTERGROWTH-21st · Crecimiento posnatal del prematuro
+   ------------------------------------------------------------
+   Villar J, Giuliani F, Bhutta ZA, Bertino E, Ohuma EO, Ismail LC
+   et al. Postnatal growth standards for preterm infants.
+   Lancet Glob Health 2015;3(11):e681-e691.
+
+   Cubre de 27 a 64 semanas de edad posmenstrual y está hecho
+   expresamente para enlazar con el patrón de la OMS, que empieza
+   donde este termina. Resuelve el hueco que dejaba la corrección
+   de edad sola: antes de la fecha probable de parto no había nada
+   que graficar, y ahora sí lo hay desde las 27 semanas.
+
+   Se usan las ecuaciones y no una tabla porque el estándar está
+   publicado así: mu y sigma como función continua de la edad
+   posmenstrual. Son nueve coeficientes contra cientos de filas.
+
+   Por qué INTERGROWTH y no Fenton: la Universidad de Calgary no
+   publica las tablas LMS de Fenton —hay que pedirlas a la autora y
+   el uso comercial pasa por licencia—, mientras que este estándar
+   es de acceso abierto. Y aproximar valores LMS a ojo en una
+   herramienta clínica no es una opción.
+
+   VALIDADO: las cuatro ecuaciones se compararon contra las 5810
+   celdas de las tablas oficiales (peso, longitud y perímetro
+   cefálico de 27 a 64 semanas, y peso para longitud de 35 a 65 cm,
+   ambos sexos, de -3 a +3 DE). Ninguna diferencia excede el
+   redondeo de la tabla publicada.
+   ============================================================ */
+const IG_PMA_MIN = 27, IG_PMA_MAX = 64;
+
+function igMuSigma(ind, sexo, x){
+  const M = sexo === "m" ? 1 : 0, L = Math.log(x);
+  switch(ind){
+    case "wfa":  return {mu: 2.591277 - 0.01155*Math.sqrt(x) - 2201.705/(x*x) + 0.0911639*M,
+                         sigma: 0.1470258 + 505.92394/(x*x) - 140.0576/(x*x)*L, log:true};
+    case "lhfa": return {mu: 4.136244 - 547.0018/(x*x) + 0.0026066*x + 0.0314961*M,
+                         sigma: 0.050489 + 310.44761/(x*x) - 90.0742/(x*x)*L, log:true};
+    case "hcfa": return {mu: 55.53617 - 852.0059/x + 0.7957903*M,
+                         sigma: 3.0582292 + 3910.05/(x*x) - 180.5625/x, log:false};
+  }
+  return null;
+}
+/** Z de peso, longitud o perímetro cefálico por edad posmenstrual. */
+function igZ(ind, sexo, pma, valor){
+  if(!valor || !sexo || pma < IG_PMA_MIN || pma > IG_PMA_MAX) return null;
+  const c = igMuSigma(ind, sexo, pma); if(!c) return null;
+  const y = c.log ? Math.log(valor) : valor;
+  return (y - c.mu) / c.sigma;
+}
+/** Z de peso para la longitud. Va por longitud en cm, no por edad. */
+function igZPesoLongitud(sexo, cm, kg){
+  if(!kg || !cm || cm < 35 || cm > 65 || !sexo) return null;
+  const dm = cm/10, L = Math.log(dm), c3 = dm*dm*dm;
+  const c = sexo === "m"
+    ? {mu: 13.98383 + 203.5677/(dm*dm) - 291.114/(dm*dm)*L,
+       sigma: Math.exp(-1.830098 + 0.0049708*c3)}
+    : {mu: 50.32492 + 140.8019/dm - 167.906/Math.sqrt(dm),
+       sigma: 0.2195888 - 0.0046046*c3 + 0.0033017*c3*L};
+  return (kg - c.mu) / c.sigma;
+}
+
+/** Qué patrón corresponde en una fecha dada: INTERGROWTH o la OMS.
+    El prematuro va por INTERGROWTH mientras esté dentro de las 27–64
+    semanas posmenstruales; pasado eso, OMS con edad corregida. */
+function patronEn(fecha){
+  if(!fecha || !esPretermino()) return {tipo:"who"};
+  const fn = parseISO(state.paciente.fn);
+  const pma = pmaSemanas(fn, fecha);
+  if(pma == null) return {tipo:"who"};
+  if(pma < IG_PMA_MIN) return {tipo:"ninguno", pma};
+  if(pma <= IG_PMA_MAX) return {tipo:"ig", pma};
+  return {tipo:"who", pma};
+}
+
 function indicadores(peso,talla,pc,meses,sexo,extra){
   const r={valores:{},z:{},banderas:[],muac:null,edema:!!(extra&&extra.edema)};
+
+  /* Prematuro dentro de la ventana de INTERGROWTH: ese estándar manda,
+     y se indexa por edad posmenstrual, no por edad corregida. */
+  const pat = (extra && extra.fecha) ? patronEn(parseISO(extra.fecha)) : {tipo:"who"};
+  if(pat.tipo === "ninguno") return r;          // aún por debajo de 27 semanas
+  if(pat.tipo === "ig" && sexo){
+    r.patron = "ig"; r.pma = pat.pma;
+    const t = tallaAjustada(talla, 0, extra&&extra.posicion);
+    r.valores.tallaAjustada = t;
+    if(peso){ r.valores.peso=peso; r.z.wfa = igZ("wfa", sexo, pat.pma, peso); }
+    if(t){ r.valores.talla=talla; r.z.lhfa = igZ("lhfa", sexo, pat.pma, t); }
+    if(pc){ r.valores.pc=pc; r.z.hcfa = igZ("hcfa", sexo, pat.pma, pc); }
+    if(peso && t){ r.valores.pesoTalla=peso; r.z.wfl = igZPesoLongitud(sexo, t, peso); }
+    if(extra && extra.muac) r.valores.muac = extra.muac;
+    return r;                                   /* sin IMC ni banderas de la OMS:
+                                                   este estándar no las define */
+  }
+
+  r.patron = "who";
   if(!sexo||meses==null||meses<0||meses>60) return r;
   const t = tallaAjustada(talla, meses, extra&&extra.posicion);
   r.valores.tallaAjustada = t;
@@ -2708,7 +2879,7 @@ function validarBorrador(){
      año mal digitado en la fecha o una unidad equivocada. Avisar aquí evita
      que el error entre al expediente y contamine la curva. */
   if(fn&&f&&p.sexo&&f>=fn){
-    const mm=edadMeses(fn,f);
+    const mm=edadCrec(fn,f);
     [["wfa",peso],["lhfa",talla],["hcfa",pc]].forEach(([ind,val])=>{
       if(!val) return;
       const z=zscore(ind,p.sexo,mm,val);
@@ -3312,9 +3483,27 @@ function renderPacienteForm(){
   }
   const p=state.paciente;
   const eg=parseFloat(p.eg);
-  document.getElementById("p-eg-nota").innerHTML = eg&&eg<37
-    ? `<b>Prematuro (${eg} semanas).</b> Para el z-score de un prematuro se usa la edad corregida hasta los 24 meses; esta versión grafica edad cronológica, así que interprete con ese matiz.`
-    : "";
+  const fnP = parseISO(p.fn), hoyP = parseISO(hoyISO());
+  document.getElementById("p-eg-nota").innerHTML = (()=>{
+    if(!(eg && eg < EG_TERMINO)) return "";
+    const s = 40 - eg;
+    const pma = fnP ? pmaSemanas(fnP, hoyP) : null;
+    let t = `<b>Pretérmino (${eg} semanas).</b> Le faltaron ${s} semanas para el término, `
+          + `así que el crecimiento y los hitos se grafican con <b>edad corregida</b> `
+          + `hasta los ${CORRECCION_FIN_MESES} meses corregidos. `
+          + `<b>Las vacunas no se corrigen</b>: van por edad cronológica, como debe ser.`;
+    if(pma !== null && pma < IG_PMA_MIN){
+      t += `<br><b>Va en ${fmt(pma,0)} semanas de edad posmenstrual.</b> El patrón de `
+         + `INTERGROWTH para prematuros empieza en las ${IG_PMA_MIN}; hasta entonces `
+         + `las medidas se guardan pero no hay z-score que calcular.`;
+    }else if(pma !== null && pma <= IG_PMA_MAX){
+      t += `<br><b>Va en ${fmt(pma,0)} semanas de edad posmenstrual</b>, así que ahora `
+         + `mismo se grafica con el patrón <b>INTERGROWTH-21st</b> de crecimiento `
+         + `posnatal del prematuro, indexado por edad posmenstrual. Pasadas las `
+         + `${IG_PMA_MAX} semanas cambia solo al patrón de la OMS con edad corregida.`;
+    }
+    return t;
+  })();
   const kgN = pesoNacerKg();
   document.getElementById("p-nlbs").innerHTML = kgN
     ? `<b>${kgALbOz(kgN).lb} lb ${kgALbOz(kgN).oz} oz</b> = <b>${fmt(kgN,3)} kg</b>.` : "";
@@ -3336,7 +3525,7 @@ function renderBorrador(){
   const txtF=document.getElementById("m-fecha-txt");
   if(txtF && document.activeElement!==txtF) txtF.value=textoDesdeIso(b.fecha);
   const fnB=parseISO(state.paciente.fn), fB=parseISO(b.fecha);
-  const mB = fnB&&fB ? edadMeses(fnB,fB) : null;
+  const mB = fnB&&fB ? edadCrec(fnB,fB) : null;
   document.getElementById("m-pos-nota").textContent = mB==null ? ""
     : (mB<24 ? "Menor de 24 meses: el patrón espera longitud acostado."
              : "24 meses o más: el patrón espera estatura de pie.");
@@ -3348,9 +3537,14 @@ function renderBorrador(){
   document.querySelectorAll('[data-action="unidad"]').forEach(x=>
     x.setAttribute("aria-pressed", String(x.dataset.u===state.unidadPeso)));
   const fn=parseISO(state.paciente.fn), f=parseISO(b.fecha);
-  document.getElementById("m-edad").textContent =
-    fn&&f ? "Edad en esta consulta: "+edadTexto(fn,f)+"  ·  "+fmt(edadMeses(fn,f),1)+" meses"
-          : "La edad se calcula sola en cuanto haya fecha de nacimiento.";
+  /* Las dos edades juntas cuando hay prematuridad. Separadas en la
+     pantalla invitan a usar la que no toca; una al lado de la otra se
+     ve de inmediato cuál manda en qué. */
+  document.getElementById("m-edad").textContent = !(fn&&f)
+    ? "La edad se calcula sola en cuanto haya fecha de nacimiento."
+    : "Edad en esta consulta: " + edadTexto(fn,f) + "  ·  " + fmt(edadMeses(fn,f),1) + " meses"
+      + (corrigiendoEn(fn,f) ? "   |   " + textoCorregida(fn,f)
+                               + " (es la que usan curvas e hitos)" : "");
   /* La equivalencia siempre a la vista: es la comprobación de que la
      entrada se interpretó como el clínico quiso. */
   const kg=pesoKg();
@@ -3409,16 +3603,42 @@ function renderZ(){
     return;
   }
 
-  const meses=edadMeses(fn,parseISO(usar.fecha));
-  ctx.textContent = meses>60
-    ? "Fuera del rango 0–60 meses del patrón OMS"
-    : (escribiendo ? fmt(meses,1)+" meses de edad"
-                   : `última medición · ${fmtFecha(usar.fecha)} · ${fmt(meses,1)} meses`);
+  const fMed = parseISO(usar.fecha);
+  const meses = edadCrec(fn, fMed);
+  const corrige = corrigiendoEn(fn, fMed);
+  const etq = corrige ? " corregidos" : "";
+
+  /* Qué patrón corresponde en esta fecha. El prematuro dentro de las 27–64
+     semanas posmenstruales va por INTERGROWTH, que se indexa por edad
+     posmenstrual; por debajo de 27 no hay estándar y se dice, porque una
+     pantalla en blanco parece una falla y no una decisión clínica. */
+  const pat = patronEn(fMed);
+
+  if(pat.tipo === "ninguno"){
+    ctx.textContent = `${fmt(pat.pma,0)} semanas de edad posmenstrual`;
+    resumen.innerHTML = "";
+    host.innerHTML = `<div class="empty"><b>Todavía no hay estándar que aplique</b>
+      El patrón de INTERGROWTH para prematuros empieza en las ${IG_PMA_MIN} semanas
+      de edad posmenstrual y este niño va en ${fmt(pat.pma,0)}.
+      Registre las medidas igual: quedan guardadas y los z-scores aparecen solos
+      en cuanto entre en rango.</div>`;
+    return;
+  }
+
+  if(pat.tipo === "ig"){
+    ctx.textContent = (escribiendo ? "" : `última medición · ${fmtFecha(usar.fecha)} · `)
+      + `${fmt(pat.pma,1)} semanas de edad posmenstrual · patrón INTERGROWTH-21st`;
+  }else{
+    ctx.textContent = meses>60
+      ? "Fuera del rango 0–60 meses del patrón OMS"
+      : (escribiendo ? fmt(meses,1)+` meses de edad${etq}`
+                     : `última medición · ${fmtFecha(usar.fecha)} · ${fmt(meses,1)} meses${etq}`);
+  }
 
   const act=indicadores(usar.peso, usar.talla, usar.pc, meses, p.sexo, usar);
   const prev=previaA(usar.fecha);
-  const ant = prev ? indicadores(prev.peso, prev.talla, prev.pc, edadMeses(fn,parseISO(prev.fecha)), p.sexo,
-                                 {muac:prev.muac, posicion:prev.posicion, edema:prev.edema}) : {z:{}};
+  const ant = prev ? indicadores(prev.peso, prev.talla, prev.pc, edadCrec(fn,parseISO(prev.fecha)), p.sexo,
+                                 {muac:prev.muac, posicion:prev.posicion, edema:prev.edema, fecha:prev.fecha}) : {z:{}};
 
   resumen.innerHTML = clasificacionHTML(act);
 
@@ -3538,7 +3758,7 @@ function chartSVG(ind, opts){
   if(!fn||!p.sexo) return "";
   const pts = medicionesOrdenadas()
     .filter(m=>m[meta.campo])
-    .map(m=>({x:edadMeses(fn,parseISO(m.fecha)), y:m[meta.campo]}))
+    .map(m=>({x:edadCrec(fn,parseISO(m.fecha)), y:m[meta.campo]}))
     .filter(d=>d.x>=0&&d.x<=60);
   const maxX = Math.max(6, Math.min(60, Math.ceil((pts.length?Math.max(...pts.map(d=>d.x)):3)+3)));
   const W=o.W,H=o.H,ml=44,mr=14,mt=12,mb=34;
@@ -3620,9 +3840,9 @@ function renderTablaMediciones(){
       <th>Nota</th><th class="no-print"></th>
     </tr></thead>
     <tbody>${rows.map(m=>{
-      const mm = fn?edadMeses(fn,parseISO(m.fecha)):null;
+      const mm = fn?edadCrec(fn,parseISO(m.fecha)):null;
       const r = indicadores(m.peso,m.talla,m.pc,mm,sexo,
-                            {muac:m.muac, posicion:m.posicion, edema:m.edema});
+                            {muac:m.muac, posicion:m.posicion, edema:m.edema, fecha:m.fecha});
       const z = ind => r.z[ind]!=null ? fmtZ(r.z[ind]) : "—";
       const enLb = state.unidadPeso==="lb";
       const o = m.peso!=null ? kgALbOz(m.peso) : null;
@@ -3948,7 +4168,7 @@ function renderHitos(){
       Sin ella no se puede situar ningún hito en su ventana.</div>`;
     return;
   }
-  const mHoy = edadMeses(fn, parseISO(hoyISO()));
+  const mHoy = edadCrec(fn, parseISO(hoyISO()));
   const MAX = 20;
   const pos = m => Math.max(0, Math.min(100, m/MAX*100));
 
@@ -3960,7 +4180,7 @@ function renderHitos(){
   let logrados=0, alertas=0;
   const html = HITOS.map((hi,i)=>{
     const d = state.hitos[hi.id] || {};
-    const mLogro = d.fecha ? edadMeses(fn, parseISO(d.fecha)) : null;
+    const mLogro = d.fecha ? edadCrec(fn, parseISO(d.fecha)) : null;
     let estado, color, tono="";
     if(mLogro!=null){
       logrados++;
@@ -4083,10 +4303,10 @@ function mejorPar(ind, campo){
 
   let mejor=null;
   for(let j=ms.length-1; j>=1; j--){
-    const mJ = edadMeses(fn, parseISO(ms[j].fecha));
+    const mJ = edadCrec(fn, parseISO(ms[j].fecha));
     let candidato=null;
     for(let i=j-1; i>=0; i--){
-      const mI = edadMeses(fn, parseISO(ms[i].fecha));
+      const mI = edadCrec(fn, parseISO(ms[i].fecha));
       const largo = mJ - mI;
       if(largo > 7) break;                   // más allá del intervalo mayor
       const n = cfg.intervalos.reduce((acc,x)=>
@@ -4101,7 +4321,7 @@ function mejorPar(ind, campo){
   if(!mejor) return null;
 
   const a=ms[mejor.i], b=ms[mejor.j];
-  const mA=edadMeses(fn,parseISO(a.fecha)), mB=edadMeses(fn,parseISO(b.fecha));
+  const mA=edadCrec(fn,parseISO(a.fecha)), mB=edadCrec(fn,parseISO(b.fecha));
   const inc=(b[campo]-a[campo])*cfg.factor;
   const v=velocidad(ind, p.sexo, mA, mB, inc);
   if(v.motivo) return null;
@@ -4138,7 +4358,7 @@ function renderVelocidad(){
   const b=ms[ms.length-2], a=ms[ms.length-1];
   const dias=diasEntre(parseISO(b.fecha), parseISO(a.fecha));
   if(dias<=0){ host.innerHTML=`<div class="empty">Las dos últimas mediciones tienen la misma fecha.</div>`; return; }
-  const mA=edadMeses(fn,parseISO(a.fecha)), mB=edadMeses(fn,parseISO(b.fecha));
+  const mA=edadCrec(fn,parseISO(a.fecha)), mB=edadCrec(fn,parseISO(b.fecha));
 
   const bloques=[], tarjetas=[], sinEstandar=[];
 
@@ -4147,8 +4367,8 @@ function renderVelocidad(){
      cuánto le falta no le sirve para nada. */
   let separacionMayor = 0;
   if(ms.length>1){
-    const a0=edadMeses(fn,parseISO(ms[0].fecha));
-    const aN=edadMeses(fn,parseISO(ms[ms.length-1].fecha));
+    const a0=edadCrec(fn,parseISO(ms[0].fecha));
+    const aN=edadCrec(fn,parseISO(ms[ms.length-1].fecha));
     separacionMayor = aN-a0;
   }
 
@@ -4296,9 +4516,9 @@ function renderPadres(){
   }
 
   const ultima = medicionesOrdenadas().slice(-1)[0] || null;
-  const mm = ultima ? edadMeses(fn,parseISO(ultima.fecha)) : null;
+  const mm = ultima ? edadCrec(fn,parseISO(ultima.fecha)) : null;
   const r = ultima ? indicadores(ultima.peso,ultima.talla,ultima.pc,mm,p.sexo,
-              {muac:ultima.muac, posicion:ultima.posicion, edema:ultima.edema})
+              {muac:ultima.muac, posicion:ultima.posicion, edema:ultima.edema, fecha:ultima.fecha})
             : {valores:{},z:{},banderas:[]};
 
   /* Una sola frase, la del indicador más relevante. Si algo requiere
@@ -4381,6 +4601,11 @@ function renderPadres(){
       </div>
       <p class="hint" style="text-align:center;margin-top:var(--s2)">
         ${ultima.peso!=null?`${fmt(ultima.peso,2)} kg · `:""}medido el ${fmtFecha(ultima.fecha)}</p>
+      ${corrigiendoEn(fn, parseISO(ultima.fecha)) ? `
+      <p class="hint" style="text-align:center">
+        Como nació antes de tiempo, su crecimiento se compara con su
+        <b>edad corregida</b> —la que tendría si hubiera nacido en su fecha—.
+        Es lo correcto y es temporal.</p>` : ""}
       ${lectura?`<div class="pw-lectura ${tono}">
         <div>${p.notaEncargado&&p.notaEncargado.trim()
           ? `<b>Nota de su médico</b> ${lectura}` : lectura}</div></div>`:""}
@@ -4454,7 +4679,7 @@ function renderPadres(){
       ${hitosLogrados.map(x=>`<div class="pw-vac">
         <span class="t">${ESTRELLA}</span>
         <span class="n">${esc(x.nom)}</span>
-        <span class="f">a los ${fmt(edadMeses(fn,parseISO(state.hitos[x.id].fecha)),0)} meses</span>
+        <span class="f">a los ${fmt(edadCrec(fn,parseISO(state.hitos[x.id].fecha)),0)} meses</span>
       </div>`).join("")}
     </div>`:""}
 
@@ -4529,7 +4754,7 @@ function hitosDoc(fn){
     <div class="doc-vac">${logrados.map(h=>{
       const f=state.hitos[h.id].fecha;
       return `<div class="it"><span class="tick">✓</span>
-        <span class="n">${esc(h.nom)}<span class="marca"> · a los ${fmt(edadMeses(fn,parseISO(f)),1)} meses</span></span>
+        <span class="n">${esc(h.nom)}<span class="marca"> · a los ${fmt(edadCrec(fn,parseISO(f)),1)} meses</span></span>
         <span class="f">${fmtFecha(f)}</span></div>`;
     }).join("")}</div>`;
 }
@@ -4537,9 +4762,9 @@ function hitosDoc(fn){
 function buildDoc(){
   const p=state.paciente, fn=parseISO(p.fn), hoy=parseISO(hoyISO()), s=SEDES[state.sede];
   const ultima = medicionesOrdenadas().slice(-1)[0] || null;
-  const mm = ultima && fn ? edadMeses(fn,parseISO(ultima.fecha)) : null;
+  const mm = ultima && fn ? edadCrec(fn,parseISO(ultima.fecha)) : null;
   const r = ultima ? indicadores(ultima.peso,ultima.talla,ultima.pc,mm,p.sexo,
-                    {muac:ultima.muac, posicion:ultima.posicion, edema:ultima.edema})
+                    {muac:ultima.muac, posicion:ultima.posicion, edema:ultima.edema, fecha:ultima.fecha})
                    : {valores:{},z:{},banderas:[]};
 
   const stats = ["wfa","lhfa","wfl","hcfa"].map(ind=>{
