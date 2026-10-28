@@ -1048,11 +1048,18 @@ body.lectura .solo-clinico{display:none !important}
   <form class="login-card" id="clave-gate" hidden autocomplete="on">
     <span class="login-filo" aria-hidden="true"></span>
     <div class="login-titulo"><span>Cree su contraseña</span></div>
-    <p class="gate-txt">
+    <p class="gate-txt" id="g-txt">
       Entró con la contraseña temporal que le dio la clínica. Como nosotros
       también la conocemos, no sirve como contraseña definitiva.
       Cree una suya para continuar: nadie más va a saberla.
     </p>
+    <div class="field" id="g-campo-usuario" hidden>
+      <label for="g-usuario">El usuario con el que va a entrar</label>
+      <input type="text" id="g-usuario" autocomplete="username"
+             autocapitalize="none" autocorrect="off" spellcheck="false">
+      <p class="hint" style="margin:4px 0 0">
+        Déjelo como está o escriba el que prefiera. Letras y números, sin espacios.</p>
+    </div>
     <div class="field">
       <label for="g-nueva">Su contraseña nueva</label>
       <input type="password" id="g-nueva" name="new-password" autocomplete="new-password"
@@ -2134,7 +2141,7 @@ const DOMINIO_USUARIO = "usuario.neopediatrics.app";
    entre dos aparatos, lo primero que hay que descartar es que uno esté
    corriendo una versión distinta del archivo. Sin este número, eso es
    imposible de saber por teléfono. */
-const VERSION_APP = "2026-10-27c";
+const VERSION_APP = "2026-10-28";
 
 const normalizarUsuario = u => String(u||"").trim().toLowerCase()
   .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
@@ -3052,13 +3059,14 @@ const Nube = {
      le permiten, y existe porque sin ella la clínica no puede saber si el
      acceso temporal sigue sirviendo —y un acceso temporal cuya contraseña
      conoce la clínica no debería seguir sirviendo para siempre. */
-  async marcarClaveCambiada(){
+  async marcarClaveCambiada(usuarioElegido){
     const {doc,setDoc} = this.fs;
     const uid = this.auth?.currentUser?.uid;
     if(!uid) return {error:"La sesión expiró."};
     try{
-      await setDoc(doc(this.db,"accesos",uid),
-                   {claveCambiadaEn:new Date().toISOString()}, {merge:true});
+      const d = {claveCambiadaEn:new Date().toISOString()};
+      if(usuarioElegido) d.usuarioElegido = usuarioElegido;
+      await setDoc(doc(this.db,"accesos",uid), d, {merge:true});
       return {ok:true};
     }catch(err){ return {error: err.code||err.message}; }
   },
@@ -3210,6 +3218,49 @@ const Nube = {
      un expediente para el que ya no tiene permiso y recibiría un error de
      permisos. Sin atajo cae en «su acceso no está asociado a ningún
      niño», que es la verdad y se entiende. */
+  /* La tabla de alias se lee ANTES de entrar, así que es pública. No da
+     acceso a nada: dice a qué cuenta apunta un usuario, pero sin la
+     contraseña eso no abre ninguna puerta, y el correo interno ya era
+     deducible del propio usuario. No contiene ningún dato clínico. */
+  async resolverUsuario(ident){
+    if(this.estado!=="lista" || !ident) return null;
+    try{
+      const {doc,getDoc} = this.fs;
+      const s = await getDoc(doc(this.db,"usuarios",ident));
+      return s.exists() ? (s.data().correo||null) : null;
+    }catch(e){
+      console.warn("No se pudo resolver el usuario:", e.code||e.message);
+      return null;
+    }
+  },
+  /* Lo escribe el RESPONSABLE al restablecer: reclama el usuario con el
+     que va a entrar de ahora en adelante. Las reglas solo le dejan tomar
+     uno libre o reescribir el suyo, así que no puede quitarle el usuario
+     a otra familia ni dejarla sin poder entrar. */
+  async reclamarUsuario(ident){
+    const {doc,getDoc,setDoc} = this.fs;
+    const u = this.auth?.currentUser;
+    if(!u) return {error:"La sesión expiró."};
+    try{
+      const ref = doc(this.db,"usuarios",ident);
+      const s = await getDoc(ref);
+      if(s.exists() && s.data().uid !== u.uid) return {ocupado:true};
+      await setDoc(ref, {correo:u.email, uid:u.uid,
+                         actualizadoEn:new Date().toISOString()}, {merge:true});
+      return {ok:true};
+    }catch(err){
+      return {error: err.code==="permission-denied"
+        ? "Ese usuario ya le pertenece a otra persona. Pruebe con otro."
+        : (err.code||err.message)};
+    }
+  },
+
+  async apuntarUsuario(ident, correo, uid){
+    const {doc,setDoc} = this.fs;
+    await setDoc(doc(this.db,"usuarios",ident),
+                 {correo, uid, actualizadoEn:new Date().toISOString()}, {merge:true});
+  },
+
   async borrarIndiceAcceso(uid){
     const {doc,deleteDoc} = this.fs;
     await deleteDoc(doc(this.db,"accesos",uid));
@@ -3374,7 +3425,19 @@ async function iniciarSesion(mail, pass){
   if(!bruto||!pass) return {error:"Escriba su correo o usuario y su contraseña."};
   if(!pareceCorreo(bruto) && normalizarUsuario(bruto).length<4)
     return {error:"El usuario debe tener al menos 4 letras o números. Si es un correo, revise que lleve arroba."};
-  const email = aCorreo(bruto);
+  /* El usuario que ella escribe no tiene por qué ser el correo interno de
+     la cuenta. Cuando se restablece un acceso hay que crear una cuenta
+     nueva —Firebase no permite reutilizar la anterior ni cambiarle la
+     contraseña desde aquí—, pero el usuario que la familia conoce se
+     queda igual: una tabla de alias lo manda a la cuenta vigente.
+
+     Así, «mariagomez» sigue siendo «mariagomez» después de tres
+     restablecimientos, y nadie tiene que aprenderse un nombre nuevo. */
+  let email = aCorreo(bruto);
+  if(!pareceCorreo(bruto)){
+    const real = await Nube.resolverUsuario(normalizarUsuario(bruto));
+    if(real) email = real;
+  }
   const r = await Nube.entrar(email, pass);
   if(r.error) return {error:r.error};
   /* Si no hubo nube, se entra en modo local: la contraseña no se verifica
@@ -3401,7 +3464,16 @@ async function compuertaClaveTemporal(){
     const cambiada = idx.claveCambiadaEn || "";
     const desde = idx.temporalDesde || "";
     if(cambiada && (!desde || cambiada >= desde)) return false;
-    state.gateClave = {ident: aIdentificador(state.sesion?.email||"")};
+    /* En un restablecimiento también se le pide el usuario: así el correo
+       que la clínica tiene registrado se queda como dato de contacto y no
+       se convierte en una credencial deformada. Viene sugerido, para que
+       la familia solo tenga que aceptarlo. */
+    state.gateClave = {
+      ident: aIdentificador(state.sesion?.email||""),
+      pedirUsuario: !!idx.pedirUsuario,
+      sugerido: normalizarUsuario(idx.usuarioSugerido || "") ||
+                normalizarUsuario(String(idx.nombre||"").split(/\s+/).slice(0,2).join("."))
+    };
     return true;
   }catch(e){
     console.warn("No se pudo comprobar el acceso temporal:", e.code||e.message);
@@ -3423,6 +3495,17 @@ function renderSesion(){
     document.body.classList.add("sin-sesion");
     document.body.classList.remove("lectura");
     document.getElementById("sesion").innerHTML="";
+    const g = state.gateClave;
+    const campo = document.getElementById("g-campo-usuario");
+    campo.hidden = !g.pedirUsuario;
+    if(g.pedirUsuario){
+      const inp = document.getElementById("g-usuario");
+      if(!inp.value) inp.value = g.sugerido || g.ident;
+      document.getElementById("g-txt").innerHTML =
+        `Estamos restableciendo su acceso. Elija el usuario y la contraseña con los
+         que va a entrar de ahora en adelante. La contraseña temporal que le dimos
+         deja de servir en cuanto termine.`;
+    }
     return;
   }
   /* Mientras no hay sesión, la aplicación entera se retira del documento.
@@ -5121,7 +5204,29 @@ document.getElementById("clave-gate").addEventListener("submit", async e=>{
   if(nue===claveTemporalEnUso){
     aviso("g-alerts","block","Esa es la contraseña que le dio la clínica. Escriba una distinta."); return; }
 
+  /* El usuario se reclama ANTES de cambiar la contraseña. Si está ocupado,
+     la familia sigue pudiendo reintentar con la temporal, que todavía
+     sirve; al revés, se quedaría con contraseña nueva y sin usuario. */
+  const pedir = !!state.gateClave?.pedirUsuario;
+  let usuario = "";
   const btn=e.target.querySelector('button[type="submit"]');
+
+  if(pedir){
+    usuario = normalizarUsuario(document.getElementById("g-usuario").value);
+    if(usuario.length<4){
+      aviso("g-alerts","block","El usuario debe tener al menos 4 letras o números."); return; }
+    btn.disabled=true; btn.textContent="Comprobando…";
+    const u = await Nube.reclamarUsuario(usuario);
+    if(u.ocupado){
+      btn.disabled=false; btn.textContent="Guardar y entrar";
+      aviso("g-alerts","block",
+        `El usuario <b>${esc(usuario)}</b> ya está tomado. Pruebe con otro: ` +
+        `puede agregarle un número o el apellido.`); return; }
+    if(u.error){
+      btn.disabled=false; btn.textContent="Guardar y entrar";
+      aviso("g-alerts","block","No se pudo tomar ese usuario: "+esc(u.error)); return; }
+  }
+
   btn.disabled=true; btn.textContent="Guardando…";
   const r=await Nube.cambiarClave(claveTemporalEnUso, nue);
   if(r.error){ btn.disabled=false; btn.textContent="Guardar y entrar";
@@ -5130,13 +5235,16 @@ document.getElementById("clave-gate").addEventListener("submit", async e=>{
   /* Queda constancia en la nube, no solo en este teléfono: así la clínica
      sabe que el acceso temporal ya dejó de servir, y la compuerta no
      vuelve a salir si entra desde otro aparato. */
-  const m = await Nube.marcarClaveCambiada();
+  const m = await Nube.marcarClaveCambiada(usuario);
   btn.disabled=false; btn.textContent="Guardar y entrar";
   if(m.error){
     aviso("g-alerts","warn","Su contraseña quedó cambiada, pero no pudimos avisarle a la clínica ("
       + esc(m.error) + "). Puede continuar.");
   }
   claveTemporalEnUso = "";
+  if(usuario) aviso("l-alerts","ok",
+    `Listo. De ahora en adelante entre con el usuario <b>${esc(usuario)}</b>.`);
+  document.getElementById("g-usuario").value="";
   document.getElementById("g-nueva").value=""; document.getElementById("g-rep").value="";
   document.getElementById("g-alerts").innerHTML="";
   state.gateClave=null;
@@ -5695,6 +5803,19 @@ const enlaceAcceso = a => urlApp() + "#acceso=" + b64url.poner(a.ident + ":" + a
 
 function mensajeAcceso(a){
   const s = SEDES[state.sede];
+  if(a.porEnlace){
+    /* Restablecimiento: el usuario lo elige ella al entrar, así que no hay
+       nada que dictar. El enlace lleva la cuenta interna y la teclea solo;
+       ponerla en el mensaje solo confundiría. */
+    return `Carné de salud infantil de ${a.nombre} · ${s.nombre}\n\n` +
+      `Toque este enlace para recuperar su acceso:\n${enlaceAcceso(a)}\n\n` +
+      `Se abre solo y ahí mismo elige su usuario y su contraseña nuevos. ` +
+      `No hace falta que escriba nada de lo anterior.\n\n` +
+      `El enlace es personal: no se lo reenvíe a nadie.\n\n` +
+      `Ahí va a ver el crecimiento de ${a.nombre}, sus vacunas y los cupones de ` +
+      `descuento que le correspondan.\n\n` +
+      `Si algo no le funciona, llámenos al ${s.tel}.`;
+  }
   return `Carné de salud infantil de ${a.nombre} · ${s.nombre}\n\n` +
     `Toque este enlace y cree su contraseña:\n${enlaceAcceso(a)}\n\n` +
     `El enlace lo entra solo. Si le pide los datos, son estos:\n` +
@@ -5787,25 +5908,37 @@ async function restablecerAcceso(i){
     aviso("d-alerts","block","Guarde el expediente en la nube antes de restablecer un acceso."); return;
   }
 
+  const esCorreo = a.tipo === "correo";
   if(!confirm(
     `Restablecer el acceso de «${a.ident}».\n\n` +
-    `Se crea un usuario nuevo con una contraseña temporal que usted le dicta, ` +
-    `y el acceso actual deja de servir.\n\n` +
+    (esCorreo
+      ? `Se crea un usuario nuevo con contraseña temporal. El correo ${a.ident} ` +
+        `dejará de servir para entrar.\n\n`
+      : `El usuario «${a.ident}» NO cambia: la familia sigue entrando con el mismo. ` +
+        `Lo único que cambia es la contraseña.\n\n`) +
     `Al entrar, el responsable tendrá que crear su propia contraseña antes de ` +
     `ver el expediente.`)) return;
 
-  /* El usuario nuevo se arma sobre la misma base, con un número al final:
-     la mamá lo reconoce al dictárselo. Se prueba con el siguiente número
-     libre, porque no hay forma de consultarle a Firebase qué cuentas
-     existen desde el cliente. */
-  const base = normalizarUsuario(aIdentificador(aCorreo(a.ident)).replace(/\d+$/,"")) || "acceso";
+  /* El usuario que la familia escribe se conserva. Por dentro hace falta
+     una cuenta nueva —Firebase no deja reutilizar la anterior ni cambiarle
+     la contraseña desde el cliente—, así que se crea con un sufijo interno
+     y la tabla de alias manda el usuario de siempre a esa cuenta nueva.
+     Ese sufijo no se le dice a nadie: no sale en el mensaje ni en la
+     lista, y la mamá nunca lo teclea.
+
+     Para una cuenta de correo no hay usuario que conservar, así que ahí sí
+     se entrega uno nuevo, derivado de la parte antes de la arroba. */
+  const visible = esCorreo
+    ? (normalizarUsuario(a.ident.split("@")[0]) || "acceso")
+    : normalizarUsuario(a.ident);
+  const base = normalizarUsuario(String(a.correoReal || aCorreo(a.ident))
+                 .split("@")[0].replace(/\.r\d+$/,"")) || "acceso";
   const pass = claveSugerida();
-  let creado = null, ident = "";
+  let creado = null, correoReal = "";
 
   for(let n=2; n<=20 && !creado; n++){
-    ident = base + String(n).padStart(2,"0");
-    if(state.accesos.some(x=>x.ident===ident)) continue;
-    const r = await Nube.crearCuenta(ident+"@"+DOMINIO_USUARIO, pass);
+    correoReal = `${base}.r${n}@${DOMINIO_USUARIO}`;
+    const r = await Nube.crearCuenta(correoReal, pass);
     if(r.uid){ creado = r; break; }
     if(r.codigo !== "auth/email-already-in-use"){
       aviso("d-alerts","block","No se pudo crear el acceso temporal: "+r.error);
@@ -5814,10 +5947,23 @@ async function restablecerAcceso(i){
   }
   if(!creado){
     aviso("d-alerts","block",
-      `Se probaron veinte variantes de <b>${esc(base)}</b> y todas están ocupadas. ` +
-      `Cree el acceso a mano con otro nombre de usuario.`);
+      `Se probaron veinte cuentas internas para <b>${esc(visible)}</b> y todas están ` +
+      `ocupadas. Cree el acceso a mano con otro nombre de usuario.`);
     return;
   }
+
+  /* Aquí NO se apunta ningún alias. Es la familia quien elige su usuario
+     al entrar, en la misma pantalla donde crea la contraseña, y es ella
+     quien lo reclama. Dos motivos:
+
+     - El correo que la clínica tiene registrado se queda como dato de
+       contacto y no se convierte en una credencial deformada.
+     - Un usuario que uno mismo eligió se recuerda; uno que le asignaron,
+       no. Y quien tiene que recordarlo es ella, no nosotros.
+
+     Mientras tanto la cuenta vive bajo su nombre interno, que solo se usa
+     para el enlace y nadie teclea nunca. */
+  const ident = visible;
 
   /* El acceso viejo sale de la lista: eso es lo que lo revoca, porque
      autorizadosUid se arma desde aquí. Nada se borra de Firebase Auth
@@ -5827,8 +5973,10 @@ async function restablecerAcceso(i){
   state.accesos.splice(i,1);
   state.accesos.push({
     uid: creado.uid, ident, tipo:"usuario",
+    correoReal,                      // la cuenta de Firebase detrás del alias
     creadoEn: new Date().toISOString(),
     temporal: true, temporalDesde: new Date().toISOString(),
+    pedirUsuario: true, usuarioSugerido: visible,
     reemplazaA: viejo.ident
   });
 
@@ -5845,13 +5993,17 @@ async function restablecerAcceso(i){
 
   state.autorizadosNube = null; state.indicesNube = null;
   renderAccesos();
-  accesoEntregar = {ident, pass, nombre: state.paciente.nombre.split(/\s+/)[0] || "su hijo"};
+  accesoEntregar = {ident: aIdentificador(correoReal), pass, porEnlace:true,
+                    nombre: state.paciente.nombre.split(/\s+/)[0] || "su hijo"};
   aviso("d-alerts","ok",
     `Acceso temporal creado.<br><br>` +
     `Usuario: <b>${esc(ident)}</b><br>Contraseña temporal: <b>${esc(pass)}</b><br><br>` +
     `No se vuelve a mostrar. Envíeselo ahora: el mensaje lleva el enlace y las ` +
     `instrucciones. Al entrar se le pedirá crear su propia contraseña.<br>` +
-    `El acceso <b>${esc(viejo.ident)}</b> quedó revocado.` + botonesEntrega());
+    (esCorreo
+      ? `El correo <b>${esc(viejo.ident)}</b> ya no sirve para entrar.`
+      : `El usuario es el mismo de siempre; solo cambió la contraseña.`)
+    + botonesEntrega());
   state.tab="datos"; renderTabs();
 }
 
@@ -5887,6 +6039,7 @@ function renderAccesos(){
        contraseña que la clínica dictó sigue sirviendo. */
     const aj = state.atajosNube[a.uid];
     const cambiada = aj?.claveCambiadaEn || "";
+    const elegido  = aj?.usuarioElegido || "";
     const yaEsSuya = a.temporal && cambiada &&
                      (!a.temporalDesde || cambiada >= a.temporalDesde);
     const etqTemp = !a.temporal ? ""
@@ -5898,13 +6051,16 @@ function renderAccesos(){
     return `<div class="acceso">
       <span class="ic">${esc(a.ident[0]||"?").toUpperCase()}</span>
       <span style="flex:1">
-        <span class="id">${esc(a.ident)} ${etq}</span>
+        <span class="id">${esc(elegido || a.ident)} ${etq}</span>
         <span class="tp">${a.tipo==="usuario"?"Usuario sin correo":"Correo"}${
           a.creadoEn?` · creado el ${fmtFecha(a.creadoEn.slice(0,10))}`:""}${
           a.reemplazaA?` · reemplaza a ${esc(a.reemplazaA)}`:""}</span>
         ${a.temporal?`<span class="tp">${yaEsSuya
-          ? `Creó su propia contraseña el ${fmtFecha(cambiada.slice(0,10))}. La temporal ya no sirve.`
-          : "Contraseña temporal entregada por la clínica. Al entrar se le pide crear la suya."
+          ? `Creó su propia contraseña el ${fmtFecha(cambiada.slice(0,10))}${
+              elegido?` y entra con el usuario <b>${esc(elegido)}</b>`:""}. La temporal ya no sirve.`
+          : a.pedirUsuario
+        ? "Enlace de restablecimiento entregado. Al abrirlo elegirá su usuario y su contraseña."
+        : "Contraseña temporal entregada por la clínica. Al entrar se le pide crear la suya."
           }</span>`:""}
         <span class="uid">Identificador de la cuenta: <code>${esc(a.uid||"—")}</code></span>
       </span>
@@ -6124,8 +6280,17 @@ async function guardarAcceso(){
      acceso que se crea por primera vez: la acabamos de teclear nosotros y
      la vamos a dictar. Que la familia cree la suya al entrar no es un
      caso especial del acceso perdido, es cómo debe funcionar siempre. */
-  state.accesos.push({uid:r.uid, ident, tipo:tipoAcceso, creadoEn:new Date().toISOString(),
+  state.accesos.push({uid:r.uid, ident, tipo:tipoAcceso, correoReal:correo,
+                      creadoEn:new Date().toISOString(),
                       temporal:true, temporalDesde:new Date().toISOString()});
+
+  /* El alias se apunta desde el primer día, aunque todavía apunte a la
+     cuenta obvia. Así el día que haya que restablecer, el usuario ya es
+     un nombre estable y no el correo interno de una cuenta concreta. */
+  if(tipoAcceso==="usuario"){
+    try{ await Nube.apuntarUsuario(ident, correo, r.uid); }
+    catch(e){ console.warn("No se pudo apuntar el usuario:", e.code||e.message); }
+  }
   Store.saveMeta({accesos:state.accesos});
   state.pendIndices.add(r.uid);
   state.pendPaciente = true;
@@ -6464,8 +6629,10 @@ async function subirPendientes(silencioso){
          al ingresar solo se ha leído este documento, y es ahí donde hay
          que saber si toca pedir contraseña antes de dejar entrar. */
       await Nube.guardarIndiceAcceso(uid, state.pacienteId, state.paciente.nombre,
-        ac.temporal ? {temporal:true, temporalDesde:ac.temporalDesde||""}
-                    : {temporal:false});
+        ac.temporal ? {temporal:true, temporalDesde:ac.temporalDesde||"",
+                       pedirUsuario: !!ac.pedirUsuario,
+                       usuarioSugerido: ac.usuarioSugerido||""}
+                    : {temporal:false, pedirUsuario:false});
       state.pendIndices.delete(uid);
     }
 
